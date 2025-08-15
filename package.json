@@ -27,6 +27,12 @@
     "migration:custom": "ts-node src/database/run-migrations.ts",
     "seed": "ts-node src/database/seeding/seeds.ts"
   },
+  "lint-staged": {
+    "*.ts": [
+      "eslint --fix",
+      "prettier --write"
+    ]
+  },
   "dependencies": {
     "@nestjs/bullmq": "10.2.3",
     "@nestjs/common": "10.4.15",
@@ -68,7 +74,9 @@
     "eslint": "8.57.1",
     "eslint-config-prettier": "9.1.0",
     "eslint-plugin-prettier": "5.2.3",
+    "husky": "9.1.7",
     "jest": "29.7.0",
+    "lint-staged": "16.1.5",
     "prettier": "3.5.3",
     "source-map-support": "0.5.21",
     "supertest": "7.0.0",
