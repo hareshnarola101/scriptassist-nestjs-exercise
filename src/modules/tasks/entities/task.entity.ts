@@ -28,13 +28,13 @@ export class Task {
   })
   priority: TaskPriority;
 
-  @Column({ name: 'due_date', nullable: true })
+  @Column({ name: 'due_date', type: 'timestamp', nullable: true })
   dueDate: Date;
 
   @Column({ name: 'user_id' })
   userId: string;
 
-  @ManyToOne(() => User, (user) => user.tasks)
+  @ManyToOne(() => User, (user) => user.tasks, { onDelete: 'CASCADE' })
   @JoinColumn({ name: 'user_id' })
   user: User;
 
