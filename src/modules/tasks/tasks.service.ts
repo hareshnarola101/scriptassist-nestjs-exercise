@@ -1,4 +1,4 @@
-import { Injectable, NotFoundException, Logger } from '@nestjs/common';
+import { Injectable, NotFoundException, Logger, HttpException, HttpStatus } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository, DataSource } from 'typeorm';
 import { Task } from './entities/task.entity';
@@ -8,6 +8,7 @@ import { InjectQueue } from '@nestjs/bullmq';
 import { Queue } from 'bullmq';
 import { TaskStatus } from './enums/task-status.enum';
 import { FindAllOptions } from './interfaces/find-all-options.interface';
+import { BatchTasksDto, BatchAction } from './dto/batch-tasks.dto';
 
 @Injectable()
 export class TasksService {
@@ -205,5 +206,66 @@ export class TasksService {
     await this.tasksRepository.update({ id }, { status: status as TaskStatus });
     const updated = await this.findOne(id);
     return updated;
+  }
+
+  async getStats(): Promise<{ total: number; byStatus: Record<string, number>; byPriority: Record<string, number> }> {
+    // Single DB query using QueryBuilder and conditional aggregates
+    const qb = this.tasksRepository.createQueryBuilder('task');
+    const total = await qb.getCount();
+
+    const counts = await this.tasksRepository.createQueryBuilder('task')
+      .select('task.status', 'status')
+      .addSelect('COUNT(*)', 'count')
+      .groupBy('task.status')
+      .getRawMany();
+
+    const priorityCounts = await this.tasksRepository.createQueryBuilder('task')
+      .select('task.priority', 'priority')
+      .addSelect('COUNT(*)', 'count')
+      .groupBy('task.priority')
+      .getRawMany();
+
+    // Map raw results into structured object
+    const byStatus = counts.reduce((acc, row) => ({ ...acc, [row.status]: parseInt(row.count, 10) }), {});
+    const byPriority = priorityCounts.reduce((acc, row) => ({ ...acc, [row.priority]: parseInt(row.count, 10) }), {});
+
+    return {
+      total,
+      byStatus,
+      byPriority,
+    };
+  }
+
+  async batchProcess(dto: BatchTasksDto) {
+    const { tasks: ids, action } = dto;
+    const queryRunner = this.dataSource.createQueryRunner();
+    await queryRunner.connect();
+    await queryRunner.startTransaction();
+    try {
+      if (action === BatchAction.COMPLETE) {
+        const res = await queryRunner.manager.createQueryBuilder()
+          .update(Task)
+          .set({ status: TaskStatus.COMPLETED })
+          .where('id IN (:...ids)', { ids })
+          .execute();
+        await queryRunner.commitTransaction();
+        return { updated: res.affected ?? 0 };
+      }
+      if (action === BatchAction.DELETE) {
+        const res = await queryRunner.manager.createQueryBuilder()
+          .delete()
+          .from(Task)
+          .where('id IN (:...ids)', { ids })
+          .execute();
+        await queryRunner.commitTransaction();
+        return { deleted: res.affected ?? 0 };
+      }
+      throw new HttpException('Unsupported action', HttpStatus.BAD_REQUEST);
+    } catch (err) {
+      await queryRunner.rollbackTransaction();
+      throw err;
+    } finally {
+      await queryRunner.release();
+    }
   }
 }
