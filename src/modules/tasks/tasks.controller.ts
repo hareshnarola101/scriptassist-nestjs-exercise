@@ -28,7 +28,7 @@ export class TasksController {
   @ApiOperation({ summary: 'Find all tasks with optional filtering & cursor pagination' })
   async findAll(@Query() query: TaskQueryDto) {
     // Service handles DB-level filtering & cursor pagination
-    const { items, nextCursor, count } = await this.tasksService.findAll({
+    const response = await this.tasksService.findAll({
       limit: query.limit,
       cursor: query.cursor,
       status: query.status,
@@ -36,39 +36,39 @@ export class TasksController {
       userId: query.userId,
       page: query.page, // optional if you still support page-based
     });
+
+    return response;
     
-    return {
-      data: items,
-      nextCursor,
-      count,
-    };
   }
 
   @Get('stats')
   @ApiOperation({ summary: 'Get task statistics' })
   async getStats() {
     // Delegated to service which runs DB aggregations
-    return this.tasksService.getStats();
+    const result = await this.tasksService.getStats();
+    return result;
   }
 
   @Get(':id')
   @ApiOperation({ summary: 'Find a task by ID' })
   async findOne(@Param('id') id: string) {
     // tasksService.findOne will throw NotFoundException internally
-    return this.tasksService.findOne(id);
+    const result = await this.tasksService.findOne(id);
+    return result;
   }
 
   @Patch(':id')
   @ApiOperation({ summary: 'Update a task' })
   async update(@Param('id') id: string, @Body() updateTaskDto: UpdateTaskDto) {
-    return this.tasksService.update(id, updateTaskDto);
+    const result = await this.tasksService.update(id, updateTaskDto);
+    return result;
   }
 
   @Delete(':id')
   @ApiOperation({ summary: 'Delete a task' })
   async remove(@Param('id') id: string) {
-    await this.tasksService.remove(id);
-    return { success: true };
+    const result = await this.tasksService.remove(id);
+    return result;
   }
 
   @Post('batch')
