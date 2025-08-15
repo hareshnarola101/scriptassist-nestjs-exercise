@@ -7,6 +7,6 @@ export interface FindAllOptions {
   cursor?: string | null;   // ISO timestamp or id encoded
   status?: TaskStatus | null;
   priority?: string;
-  user_id?: string | null;
+  userId?: string | null;
   page?: number;
 }

@@ -78,8 +78,8 @@ export class TasksService {
     if (opts.priority) {
       qb.andWhere('task.priority = :priority', { priority: opts.priority });
     }
-    if (opts.user_id) {
-      qb.andWhere('task.user_id = :user_id', { user_id: opts.user_id });
+    if (opts.userId) {
+      qb.andWhere('task.userId = :userId', { userId: opts.userId });
     }
 
     if (opts.cursor) {

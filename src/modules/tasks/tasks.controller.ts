@@ -5,11 +5,6 @@ import { UpdateTaskDto } from './dto/update-task.dto';
 import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { TaskQueryDto } from './dto/task-query.dto';
 import { BatchTasksDto } from './dto/batch-tasks.dto';
-// import { InjectRepository } from '@nestjs/typeorm';
-// import { Repository } from 'typeorm';
-// import { Task } from './entities/task.entity';
-// import { TaskStatus } from './enums/task-status.enum';
-// import { TaskPriority } from './enums/task-priority.enum';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { RateLimitGuard } from '../../common/guards/rate-limit.guard';
 import { RateLimit } from '../../common/decorators/rate-limit.decorator';
@@ -38,7 +33,7 @@ export class TasksController {
       cursor: query.cursor,
       status: query.status,
       priority: query.priority,
-      user_id: query.user_id,
+      userId: query.userId,
       page: query.page, // optional if you still support page-based
     });
     

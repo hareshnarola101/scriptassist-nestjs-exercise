@@ -24,7 +24,7 @@ export class TaskQueryDto {
 
   @IsOptional()
   @IsString()
-  user_id?: string;
+  userId?: string;
 
   // Optional page-based legacy support
   @IsOptional()
