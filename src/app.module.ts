@@ -10,6 +10,9 @@ import { AuthModule } from './modules/auth/auth.module';
 import { TaskProcessorModule } from './queues/task-processor/task-processor.module';
 import { ScheduledTasksModule } from './queues/scheduled-tasks/scheduled-tasks.module';
 import { CacheService } from './common/services/cache.service';
+import { RateLimitGuard } from './common/guards/rate-limit.guard';
+import { redisProvider } from './common/providers/redis.provider';
+import { APP_GUARD } from '@nestjs/core';
 
 @Module({
   imports: [
@@ -74,7 +77,12 @@ import { CacheService } from './common/services/cache.service';
   providers: [
     // Inefficient: Global cache service with no configuration options
     // This creates a single in-memory cache instance shared across all modules
-    CacheService
+    CacheService,
+    redisProvider,
+    {
+      provide: APP_GUARD,
+      useClass: RateLimitGuard, // Global rate limit guard
+    },
   ],
   exports: [
     // Exporting the cache service makes it available to other modules

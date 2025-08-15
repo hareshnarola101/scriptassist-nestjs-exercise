@@ -12,7 +12,7 @@ import { RateLimit } from '../../common/decorators/rate-limit.decorator';
 @ApiTags('tasks')
 @Controller('tasks')
 @UseGuards(JwtAuthGuard, RateLimitGuard)
-@RateLimit({ limit: 100, windowMs: 60000 })
+@RateLimit({ points: 100, duration: 60000 })
 @ApiBearerAuth()
 export class TasksController {
   constructor(private readonly tasksService: TasksService) {}
