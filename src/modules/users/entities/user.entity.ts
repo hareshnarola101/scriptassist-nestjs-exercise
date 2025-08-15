@@ -26,7 +26,7 @@ export class User {
   })
   role: UserRole;
 
-  @OneToMany(() => Task, (task) => task.user, { cascade: true, onDelete: 'CASCADE' })
+  @OneToMany(() => Task, (task) => task.user, { cascade: true, onDelete: 'CASCADE', eager: true })
   tasks: Task[];
 
   @CreateDateColumn({ name: 'created_at' })
