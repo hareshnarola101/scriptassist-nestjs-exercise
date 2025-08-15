@@ -62,10 +62,10 @@ export class TasksService {
    * Cursor-style pagination with relations loaded in one query.
    * Controller should pass limit & cursor; this returns { items, nextCursor }
    */
-  async findAll(opts: FindAllOptions = {}): Promise<{ items: Task[]; nextCursor: string | null }> {
+  async findAll(opts: FindAllOptions = {}): Promise<{ items: Task[]; nextCursor: string | null; count: number }> {
     // Inefficient implementation: retrieves all tasks without pagination
     // and loads all relations, causing potential performance issues
-    const limit = Math.min(opts.limit ?? 20, 100);
+    const limit = Math.min(opts.limit ?? 10, 100);
     const qb = this.tasksRepository.createQueryBuilder('task')
       .leftJoinAndSelect('task.user', 'user') // load user relation efficiently
       .orderBy('task.createdAt', 'DESC')      // ensure deterministic ordering
@@ -74,8 +74,11 @@ export class TasksService {
     if (opts.status) {
       qb.andWhere('task.status = :status', { status: opts.status });
     }
-    if (opts.ownerId) {
-      qb.andWhere('task.ownerId = :ownerId', { ownerId: opts.ownerId });
+    if (opts.priority) {
+      qb.andWhere('task.priority = :priority', { priority: opts.priority });
+    }
+    if (opts.user_id) {
+      qb.andWhere('task.user_id = :user_id', { user_id: opts.user_id });
     }
 
     if (opts.cursor) {
@@ -88,7 +91,7 @@ export class TasksService {
     const items = hasMore ? rows.slice(0, -1) : rows;
     const nextCursor = hasMore ? items[items.length - 1].createdAt.toISOString() : null;
 
-    return { items, nextCursor };
+    return { items, nextCursor, count: items.length };
   }
 
   /**
