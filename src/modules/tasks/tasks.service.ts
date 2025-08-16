@@ -305,4 +305,41 @@ export class TasksService {
       return this.formatErrorResponse(err, 'Failed to batch process tasks');
     }
   }
+
+  async getOverdueTasksBatch(
+    limit: number,
+    cursor?: string
+  ): Promise<{ tasks: Task[]; nextCursor?: string }> {
+    const query = this.tasksRepository.createQueryBuilder('task')
+      .where('task.dueDate < :now', { now: new Date() })
+      .andWhere('task.status NOT IN (:...statuses)', {
+        statuses: [TaskStatus.COMPLETED, TaskStatus.IN_PROGRESS],
+      })
+      .orderBy('task.id', 'ASC')
+      .take(limit);
+
+    if (cursor) {
+      query.andWhere('task.id > :cursor', { cursor });
+    }
+
+    const tasks = await query.getMany();
+    const nextCursor = tasks.length === limit ? tasks[tasks.length - 1].id : undefined;
+
+    return { tasks, nextCursor };
+  }
+
+  async sendOverdueNotification(taskId: string): Promise<void> {
+    const task = await this.tasksRepository.findOne({
+      where: { id: taskId },
+      relations: ['user']
+    });
+
+    if (!task) {
+      this.logger.warn(`Task ${taskId} not found for notification`);
+      return;
+    }
+
+    // Actual implementation would go here
+    this.logger.log(`Sending overdue notification to ${task.user.email} for task "${task.title}"`);
+  }
 }

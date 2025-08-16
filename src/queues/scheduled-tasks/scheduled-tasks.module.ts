@@ -9,6 +9,13 @@ import { TasksModule } from '../../modules/tasks/tasks.module';
     ScheduleModule.forRoot(),
     BullModule.registerQueue({
       name: 'task-processing',
+      defaultJobOptions: {
+        attempts: 3,
+        backoff: {
+          type: 'exponential',
+          delay: 2000, // Initial delay of 2 seconds
+        },
+      },
     }),
     TasksModule,
   ],
