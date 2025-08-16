@@ -1,6 +1,6 @@
 import { Injectable, NotFoundException, Logger, HttpException, HttpStatus } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository, DataSource } from 'typeorm';
+import { Repository, DataSource, QueryRunner, SelectQueryBuilder } from 'typeorm';
 import { Task } from './entities/task.entity';
 import { CreateTaskDto } from './dto/create-task.dto';
 import { UpdateTaskDto } from './dto/update-task.dto';
@@ -25,36 +25,60 @@ export class TasksService {
     private readonly taskQueue: Queue,
   ) {}
 
+  // -----------------------
+  // Common Helpers
+  // -----------------------
+
+  private formatErrorResponse(error: unknown, fallbackMsg: string): HttpResponse<never> {
+    const message = error && typeof error === 'object' && 'message' in error
+      ? (error as any).message
+      : 'Unknown error';
+    return { success: false, error: fallbackMsg, message };
+  }
+
+  private async runInTransaction<T>(cb: (qr: QueryRunner) => Promise<T>): Promise<T> {
+    const qr = this.dataSource.createQueryRunner();
+    await qr.connect();
+    await qr.startTransaction();
+    try {
+      const result = await cb(qr);
+      await qr.commitTransaction();
+      return result;
+    } catch (err) {
+      await qr.rollbackTransaction();
+      throw err;
+    } finally {
+      await qr.release();
+    }
+  }
+
+  private async enqueueTaskStatusUpdate(taskId: string, status: TaskStatus): Promise<void> {
+    try {
+      await this.taskQueue.add('task-status-update', { taskId, status });
+    } catch (err) {
+      this.logger.error(`Failed to enqueue status update for task ${taskId}`, err);
+      throw new Error('Failed to enqueue status update');
+    }
+  }
+
+  // -----------------------
+  // Core Methods
+  // -----------------------
+
   async create(createTaskDto: CreateTaskDto): Promise<HttpResponse<Task>> {
-    const queryRunner = this.dataSource.createQueryRunner();
-    await queryRunner.connect();
-    await queryRunner.startTransaction();
 
     try {
-      // Inefficient implementation: creates the task but doesn't use a single transaction
-      // for creating and adding to queue, potential for inconsistent state
-      const task = this.tasksRepository.create(createTaskDto);
-      // use the transaction manager to save
-      const saved = await queryRunner.manager.save(Task, task);
-
-      // commit DB changes first
-      await queryRunner.commitTransaction();
+      const saved = await this.runInTransaction(async (qr) => {
+        const task = this.tasksRepository.create(createTaskDto);
+        return qr.manager.save(Task, task);
+      });
 
       // enqueue AFTER commit. If enqueue fails we log and can retry / alert — but DB is consistent.
       try {
-        await this.taskQueue.add('task-status-update', {
-          taskId: saved.id,
-          status: saved.status,
-        });
-      } catch (qErr) {
+        await this.enqueueTaskStatusUpdate(saved.id, saved.status);
+      } catch (queueErr) {
         // enqueue failed: log for operator/action (we could push an outbox event instead)
-        this.logger.error(`Failed to enqueue task-status-update for task ${saved.id}`, qErr);
-        // Optionally persist an outbox event or schedule retry job.
-        return {
-          success: false,
-          error: 'Task created but failed to enqueue status update',
-          message: typeof qErr === 'object' && qErr !== null && 'message' in qErr ? (qErr as any).message : 'Unknown error',
-        };
+        return this.formatErrorResponse(queueErr, 'Task created but failed to enqueue status update');
       }
 
       return {
@@ -63,15 +87,7 @@ export class TasksService {
         message: 'Task created successfully',
       };
     } catch (err) {
-      await queryRunner.rollbackTransaction();
-      this.logger.error('Failed to create task, rolled back', err);
-      return {
-        success: false,
-        error: 'Failed to create task',
-        message: typeof err === 'object' && err !== null && 'message' in err ? (err as any).message : 'Unknown error',
-      };
-    } finally {
-      await queryRunner.release();
+      return this.formatErrorResponse(err, 'Failed to create task');
     }
   }
 
@@ -83,52 +99,7 @@ export class TasksService {
     try {
       const qb = this.tasksRepository.createQueryBuilder('task');
 
-      // Status filter
-      if (filters.status) {
-        qb.andWhere('task.status = :status', { status: filters.status });
-      }
-
-      // Priority filter
-      if (filters.priority) {
-        qb.andWhere('task.priority = :priority', { priority: filters.priority });
-      }
-
-      // User filter
-      if (filters.userId) {
-        qb.andWhere('task.userId = :userId', { userId: filters.userId });
-      }
-
-      // Search text filter (title + description)
-      if (filters.search) {
-        qb.andWhere(
-          '(task.title ILIKE :search OR task.description ILIKE :search)',
-          { search: `%${filters.search}%` },
-        );
-      }
-
-      // Date range: createdAt
-      if (filters.createdFrom) {
-        qb.andWhere('task.createdAt >= :createdFrom', {
-          createdFrom: filters.createdFrom,
-        });
-      }
-      if (filters.createdTo) {
-        qb.andWhere('task.createdAt <= :createdTo', {
-          createdTo: filters.createdTo,
-        });
-      }
-
-      // Date range: dueDate
-      if (filters.dueDateFrom) {
-        qb.andWhere('task.dueDate >= :dueDateFrom', {
-          dueDateFrom: filters.dueDateFrom,
-        });
-      }
-      if (filters.dueDateTo) {
-        qb.andWhere('task.dueDate <= :dueDateTo', {
-          dueDateTo: filters.dueDateTo,
-        });
-      }
+      this.applyFilters(qb, filters);
 
       // Sorting
       qb.orderBy(`task.${filters.sortBy ?? 'createdAt'}`, filters.sortOrder ?? 'DESC');
@@ -158,141 +129,96 @@ export class TasksService {
         message: 'Tasks retrieved successfully',
       };
     } catch (err) {
-      this.logger.error('Failed to retrieve tasks', err);
-      return {
-        success: false,
-        error: 'Failed to retrieve tasks',
-        message: typeof err === 'object' && err !== null && 'message' in err ? (err as any).message : 'Unknown error',
-      };
+      return this.formatErrorResponse(err, 'Failed to retrieve tasks');
     }
+  }
+
+  private applyFilters(qb: SelectQueryBuilder<Task>, filters: TaskFilterDto) {
+    if (filters.status) qb.andWhere('task.status = :status', { status: filters.status });
+    if (filters.priority) qb.andWhere('task.priority = :priority', { priority: filters.priority });
+    if (filters.userId) qb.andWhere('task.userId = :userId', { userId: filters.userId });
+    if (filters.search) {
+      qb.andWhere('(task.title ILIKE :search OR task.description ILIKE :search)', {
+        search: `%${filters.search}%`,
+      });
+    }
+    if (filters.createdFrom) qb.andWhere('task.createdAt >= :createdFrom', { createdFrom: filters.createdFrom });
+    if (filters.createdTo) qb.andWhere('task.createdAt <= :createdTo', { createdTo: filters.createdTo });
+    if (filters.dueDateFrom) qb.andWhere('task.dueDate >= :dueDateFrom', { dueDateFrom: filters.dueDateFrom });
+    if (filters.dueDateTo) qb.andWhere('task.dueDate <= :dueDateTo', { dueDateTo: filters.dueDateTo });
   }
 
   /**
    * Single-query find; throws NotFoundException if missing.
    */
-  async findOne(id: string): Promise < HttpResponse < Task >> {
-      const task = await this.tasksRepository.findOne({
-        where: { id },
-        relations: ['user'],
-      });
+  async findOne(id: string): Promise<HttpResponse<Task>> {
+    const task = await this.tasksRepository.findOne({
+      where: { id },
+      relations: ['user'],
+    });
 
-      if(!task) {
-        this.logger.warn(`Task with ID ${id} not found`);
-        return {
-          success: false,
-          error: 'Task not found',
-          message: `Task with ID ${id} not found`,
-        };
-      }
-    return {
-        success: true,
-        data: task,
-        message: 'Task retrieved successfully',
-      };
+    if (!task) {
+      return this.formatErrorResponse('Task not found', `Task with ID ${id} not found`);
     }
+    return {
+      success: true,
+      data: task,
+      message: 'Task retrieved successfully',
+    };
+  }
 
   /**
    * Update inside a transaction. Only persist changed fields.
    * Enqueue status update after successful commit if status changed.
    */
-  async update(id: string, updateTaskDto: UpdateTaskDto): Promise < HttpResponse < Task >> {
-      const queryRunner = this.dataSource.createQueryRunner();
-      await queryRunner.connect();
-      await queryRunner.startTransaction();
+  async update(id: string, updateTaskDto: UpdateTaskDto): Promise<HttpResponse<Task>> {
 
-      try {
-        const task = await queryRunner.manager.findOne(Task, {
-          where: { id },
-        });
+    try {
+      const updated = await this.runInTransaction(async (qr) => {
+        const task = await qr.manager.findOne(Task, { where: { id } });
+        if (!task) throw new NotFoundException(`Task with ID ${id} not found`);
 
-        if(!task) {
-          throw new NotFoundException(`Task with ID ${id} not found`);
+        Object.assign(task, updateTaskDto);
+        return qr.manager.save(Task, task);
+      });
+
+      if (updateTaskDto.status) {
+        try {
+          await this.enqueueTaskStatusUpdate(updated.id, updated.status);
+        } catch (queueErr) {
+          return this.formatErrorResponse(queueErr, 'Task updated but failed to enqueue status update');
         }
-
-      const originalStatus = task.status;
-
-        // merge only provided fields
-        if(updateTaskDto.title !== undefined) task.title = updateTaskDto.title;
-        if(updateTaskDto.description !== undefined) task.description = updateTaskDto.description;
-        if(updateTaskDto.status !== undefined) task.status = updateTaskDto.status as TaskStatus;
-        if(updateTaskDto.priority !== undefined) task.priority = updateTaskDto.priority;
-        if(updateTaskDto.dueDate !== undefined) task.dueDate = updateTaskDto.dueDate;
-
-        const updated = await queryRunner.manager.save(Task, task);
-        await queryRunner.commitTransaction();
-
-        // enqueue after commit if status changed
-        if(originalStatus !== updated.status) {
-      try {
-        await this.taskQueue.add('task-status-update', {
-          taskId: updated.id,
-          status: updated.status,
-        });
-      } catch (qErr) {
-        this.logger.error(`Failed to enqueue status update for task ${updated.id}`, qErr);
-        return {
-          success: false,
-          error: 'Task updated but failed to enqueue status update',
-          message: typeof qErr === 'object' && qErr !== null && 'message' in qErr ? (qErr as any).message : 'Unknown error',
-        };
       }
-    }
 
-    // reload with relations
-    const reloaded = await this.tasksRepository.findOneOrFail({ where: { id: updated.id }, relations: ['user'] });
-    return {
-      success: true,
-      data: reloaded,
-      message: 'Task updated successfully',
-    };
-  } catch(err) {
-    await queryRunner.rollbackTransaction();
-    this.logger.error(`Failed to update task ${id} - rolled back`, err);
-    return {
-      success: false,
-      error: 'Failed to update task',
-      message: typeof err === 'object' && err !== null && 'message' in err ? (err as any).message : 'Unknown error',
-    };
-  } finally {
-    await queryRunner.release();
-  }
+      // reload with relations
+      const reloaded = await this.tasksRepository.findOneOrFail({ where: { id: updated.id }, relations: ['user'] });
+      return {
+        success: true,
+        data: reloaded,
+        message: 'Task updated successfully',
+      };
+    } catch (err) {
+      return this.formatErrorResponse(err, 'Failed to update task');
+    }
   }
 
   /**
    * Remove using transaction. Consider converting to soft-delete if you need audit/history.
    */
   async remove(id: string): Promise<HttpResponse<Task[]>> {
-    const queryRunner = this.dataSource.createQueryRunner();
-    await queryRunner.connect();
-    await queryRunner.startTransaction();
     try {
-      const task = await queryRunner.manager.findOne(Task, { where: { id } });
-      if (!task) {
-        this.logger.warn(`Task with ID ${id} not found for removal`);
-        return {
-          success: false,
-          error: 'Task not found',
-          message: `Task with ID ${id} not found`,
-        };
-      }
-      // Use queryRunner to remove task
-      await queryRunner.manager.remove(Task, task);
-      await queryRunner.commitTransaction();
-      return {
-        success: true,
-        data: [],
-        message: 'Task removed successfully',
-      };
+      return await this.runInTransaction(async (repo) => {
+        const task = await repo.manager.findOne(Task, { where: { id } });
+        if (!task) {
+          return this.formatErrorResponse('Task not found', `Task with ID ${id} not found`);
+        }
+        
+        await repo.manager.remove(Task, task);
+
+        return { success: true, data: [], message: 'Task removed successfully' };
+      });
     } catch (err) {
-      await queryRunner.rollbackTransaction();
-      this.logger.error(`Failed to remove task ${id}`, err);
-      return {
-        success: false,
-        error: 'Failed to remove task',
-        message: typeof err === 'object' && err !== null && 'message' in err ? (err as any).message : 'Unknown error',
-      };
-    } finally {
-      await queryRunner.release();
+      return this.formatErrorResponse(err, 'Failed to remove task');
     }
   }
 
@@ -316,93 +242,68 @@ export class TasksService {
   /**
    * Update status called by job processors: keep it small and idempotent.
    */
-  async updateStatus(id: string, status: string): Promise<HttpResponse<Task>> {
+  async updateStatus(id: string, status: TaskStatus): Promise<HttpResponse<Task>> {
     // Option A: do partial update + fetch to return latest
-    await this.tasksRepository.update({ id }, { status: status as TaskStatus });
-    const updated = await this.findOne(id);
-    return updated;
+    await this.tasksRepository.update({ id }, { status});
+    return this.findOne(id);
   }
 
   async getStats(): Promise<HttpResponse<{ total: number; byStatus: Record<string, number>; byPriority: Record<string, number> }>> {
-    // Single DB query using QueryBuilder and conditional aggregates
-    const qb = this.tasksRepository.createQueryBuilder('task');
-    const total = await qb.getCount();
-
-    const counts = await this.tasksRepository.createQueryBuilder('task')
-      .select('task.status', 'status')
-      .addSelect('COUNT(*)', 'count')
+    const raw = await this.tasksRepository
+      .createQueryBuilder('task')
+      .select('COUNT(*)', 'total')
+      .addSelect('task.status', 'status')
+      .addSelect('task.priority', 'priority')
       .groupBy('task.status')
+      .addGroupBy('task.priority')
       .getRawMany();
 
-    const priorityCounts = await this.tasksRepository.createQueryBuilder('task')
-      .select('task.priority', 'priority')
-      .addSelect('COUNT(*)', 'count')
-      .groupBy('task.priority')
-      .getRawMany();
+    // Aggregate into maps
+    const total = raw.reduce((acc, row) => acc + parseInt(row.total, 10), 0);
+    const byStatus = raw.reduce((acc, row) => {
+      acc[row.status] = (acc[row.status] ?? 0) + parseInt(row.total, 10);
+      return acc;
+    }, {});
+    const byPriority = raw.reduce((acc, row) => {
+      acc[row.priority] = (acc[row.priority] ?? 0) + parseInt(row.total, 10);
+      return acc;
+    }, {});
 
-    // Map raw results into structured object
-    const byStatus = counts.reduce((acc, row) => ({ ...acc, [row.status]: parseInt(row.count, 10) }), {});
-    const byPriority = priorityCounts.reduce((acc, row) => ({ ...acc, [row.priority]: parseInt(row.count, 10) }), {});
-
-    return {
-      success: true,
-      data: {
-        total,
-        byStatus,
-        byPriority,
-      },
-      message: 'Task statistics retrieved successfully',
-    };
+    return { success: true, data: { total, byStatus, byPriority }, message: 'Task statistics retrieved successfully' };
   }
 
   async batchProcess(dto: BatchTasksDto): Promise<HttpResponse<{ updated?: number; deleted?: number }>> {
     const { tasks: ids, action } = dto;
-    const queryRunner = this.dataSource.createQueryRunner();
-    await queryRunner.connect();
-    await queryRunner.startTransaction();
+    
     try {
-      if (action === BatchAction.COMPLETE) {
-        const res = await queryRunner.manager.createQueryBuilder()
-          .update(Task)
-          .set({ status: TaskStatus.COMPLETED })
-          .where('id IN (:...ids)', { ids })
-          .execute();
-        await queryRunner.commitTransaction();
-        return {
-          success: true,
-          data: { updated: res.affected ?? 0 },
-          message: 'Tasks marked as completed successfully',
-        };
-      }
-      if (action === BatchAction.DELETE) {
-        const res = await queryRunner.manager.createQueryBuilder()
-          .delete()
-          .from(Task)
-          .where('id IN (:...ids)', { ids })
-          .execute();
-        await queryRunner.commitTransaction();
-        return {
-          success: true,
-          data: { deleted: res.affected ?? 0 },
-          message: 'Tasks deleted successfully',
-        };
-      }
-      // Unsupported action
-      return {
-        success: false,
-        error: 'Unsupported batch action',
-        message: `Action ${action} is not supported`,
-      };
+      return await this.runInTransaction(async (repo) => {
+        if (action === BatchAction.COMPLETE) {
+          const res = await repo
+            .manager
+            .createQueryBuilder()
+            .update(Task)
+            .set({ status: TaskStatus.COMPLETED })
+            .where('id IN (:...ids)', { ids })
+            .execute();
+
+          return { success: true, data: { updated: res.affected ?? 0 }, message: 'Tasks marked completed' };
+        }
+
+        if (action === BatchAction.DELETE) {
+          const res = await repo
+            .manager
+            .createQueryBuilder()
+            .softDelete()
+            .where('id IN (:...ids)', { ids })
+            .execute();
+
+          return { success: true, data: { deleted: res.affected ?? 0 }, message: 'Tasks deleted successfully' };
+        }
+
+        return this.formatErrorResponse('Unsupported batch action', `Action ${action} is not supported`);
+      });
     } catch (err) {
-      await queryRunner.rollbackTransaction();
-      this.logger.error(`Failed to batch process tasks`, err);
-      return {
-        success: false,
-        error: 'Failed to batch process tasks',
-        message: typeof err === 'object' && err !== null && 'message' in err ? (err as any).message : 'Unknown error',
-      };
-    } finally {
-      await queryRunner.release();
+      return this.formatErrorResponse(err, 'Failed to batch process tasks');
     }
   }
 }
