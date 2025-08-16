@@ -25,7 +25,7 @@ export class TaskProcessorService extends WorkerHost implements OnModuleInit {
   onModuleInit() {
     this.queueEvents = new QueueEvents('task-processing');
     this.queueEvents.on('failed', (args) => {
-      this.logger.warn(`Job ${args.jobId} failed after ${args.attemptsMade} attempts`);
+      this.logger.warn(`Job ${args.jobId} failed. Reason: ${args.failedReason}`);
     });
   }
 
