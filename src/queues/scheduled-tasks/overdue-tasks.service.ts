@@ -1,7 +1,7 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { Cron, CronExpression } from '@nestjs/schedule';
 import { InjectQueue } from '@nestjs/bullmq';
-import { Queue } from 'bullmq';
+import { Queue, tryCatch } from 'bullmq';
 import { InjectRepository } from '@nestjs/typeorm';
 import { LessThan, Repository } from 'typeorm';
 import { Task } from '../../modules/tasks/entities/task.entity';
@@ -13,36 +13,47 @@ export class OverdueTasksService {
 
   constructor(
     @InjectQueue('task-processing')
-    private taskQueue: Queue,
+    private readonly taskQueue: Queue,
     @InjectRepository(Task)
-    private tasksRepository: Repository<Task>,
-  ) {}
+    private readonly tasksRepository: Repository<Task>,
+  ) { }
 
   // TODO: Implement the overdue tasks checker
   // This method should run every hour and check for overdue tasks
   @Cron(CronExpression.EVERY_HOUR)
-  async checkOverdueTasks() {
-    this.logger.debug('Checking for overdue tasks...');
-    
-    // TODO: Implement overdue tasks checking logic
-    // 1. Find all tasks that are overdue (due date is in the past)
-    // 2. Add them to the task processing queue
-    // 3. Log the number of overdue tasks found
-    
-    // Example implementation (incomplete - to be implemented by candidates)
+  async checkOverdueTasks(): Promise<void> {
     const now = new Date();
-    const overdueTasks = await this.tasksRepository.find({
-      where: {
-        dueDate: LessThan(now),
-        status: TaskStatus.PENDING,
-      },
-    });
-    
-    this.logger.log(`Found ${overdueTasks.length} overdue tasks`);
-    
-    // Add tasks to the queue to be processed
-    // TODO: Implement adding tasks to the queue
-    
-    this.logger.debug('Overdue tasks check completed');
+    this.logger.debug(`Running overdue tasks check at ${now.toISOString()}`);
+
+    try {
+      // Find overdue tasks in pending state
+      const overdueTasks = await this.tasksRepository.find({
+        where: {
+          dueDate: LessThan(now),
+          status: TaskStatus.PENDING,
+        },
+        select: ['id', 'title', 'userId', 'dueDate'],
+      });
+
+      if (overdueTasks.length === 0) {
+        this.logger.log('No overdue tasks found');
+        return;
+      }
+
+      // Bulk add tasks to queue
+      const jobs = overdueTasks.map(task => ({
+        name: 'processOverdueTask',
+        data: { taskId: task.id },
+        opts: { removeOnComplete: true, removeOnFail: 50 }, // cleanup old jobs
+      }));
+
+      await this.taskQueue.addBulk(jobs);
+      this.logger.log(`Queued ${overdueTasks.length} overdue tasks for processing`);
+
+    } catch (error) {
+      this.logger.error('Failed to check overdue tasks', error);
+    } finally {
+      this.logger.debug('Overdue tasks check completed');
+    }
   }
 } 

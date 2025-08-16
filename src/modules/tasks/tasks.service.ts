@@ -7,7 +7,6 @@ import { UpdateTaskDto } from './dto/update-task.dto';
 import { InjectQueue } from '@nestjs/bullmq';
 import { Queue } from 'bullmq';
 import { TaskStatus } from './enums/task-status.enum';
-import { FindAllOptions } from './interfaces/find-all-options.interface';
 import { BatchTasksDto, BatchAction } from './dto/batch-tasks.dto';
 import { TaskFilterDto } from './dto/task-filter.dto';
 import { HttpResponse } from '../../../src/types/http-response.interface';
