@@ -1,37 +1,50 @@
-import { Injectable, NestInterceptor, ExecutionContext, CallHandler, Logger } from '@nestjs/common';
+import {
+  Injectable,
+  NestInterceptor,
+  ExecutionContext,
+  CallHandler,
+  Logger,
+} from '@nestjs/common';
 import { Observable } from 'rxjs';
-import { tap } from 'rxjs/operators';
+import { tap, catchError } from 'rxjs/operators';
 
 @Injectable()
 export class LoggingInterceptor implements NestInterceptor {
   private readonly logger = new Logger(LoggingInterceptor.name);
 
   intercept(context: ExecutionContext, next: CallHandler): Observable<any> {
-    // TODO: Implement comprehensive request/response logging
-    // This interceptor should:
-    // 1. Log incoming requests with relevant details
-    // 2. Measure and log response time
-    // 3. Log outgoing responses
-    // 4. Include contextual information like user IDs when available
-    // 5. Avoid logging sensitive information
-
     const req = context.switchToHttp().getRequest();
-    const method = req.method;
-    const url = req.url;
+    const { method, url, ip, user } = req;
+    const userId = user?.id || 'anonymous';
     const now = Date.now();
 
-    // Basic implementation (to be enhanced by candidates)
-    this.logger.log(`Request: ${method} ${url}`);
+    // Log incoming request (without sensitive body details like password)
+    this.logger.log(
+      `${method} ${url} | user=${userId} | ip=${ip}`,
+    );
 
     return next.handle().pipe(
-      tap({
-        next: (val) => {
-          this.logger.log(`Response: ${method} ${url} ${Date.now() - now}ms`);
-        },
-        error: (err) => {
-          this.logger.error(`Error in ${method} ${url} ${Date.now() - now}ms: ${err.message}`);
-        },
+      tap((data) => {
+        const responseTime = Date.now() - now;
+
+        this.logger.log(
+          ` ${method} ${url} | user=${userId} | ${responseTime}ms`,
+        );
+
+        // Optional: log response metadata only (not full body to avoid leaking data)
+        if (data?.success !== undefined) {
+          this.logger.debug(
+            `Response meta → success=${data.success} statusCode=${data.statusCode ?? 200}`,
+          );
+        }
+      }),
+      catchError((err) => {
+        const responseTime = Date.now() - now;
+        this.logger.error(
+          ` ${method} ${url} | user=${userId} | ${responseTime}ms | Error=${err.message}`,
+        );
+        throw err;
       }),
     );
   }
-} 
+}

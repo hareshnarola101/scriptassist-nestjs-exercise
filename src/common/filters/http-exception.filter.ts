@@ -1,36 +1,70 @@
-import { ExceptionFilter, Catch, ArgumentsHost, HttpException, Logger } from '@nestjs/common';
+import {
+  ExceptionFilter,
+  Catch,
+  ArgumentsHost,
+  HttpException,
+  HttpStatus,
+  Logger,
+} from '@nestjs/common';
 import { Request, Response } from 'express';
 
-@Catch(HttpException)
+@Catch()
 export class HttpExceptionFilter implements ExceptionFilter {
   private readonly logger = new Logger(HttpExceptionFilter.name);
 
-  catch(exception: HttpException, host: ArgumentsHost) {
+  catch(exception: unknown, host: ArgumentsHost) {
     const ctx = host.switchToHttp();
     const response = ctx.getResponse<Response>();
     const request = ctx.getRequest<Request>();
-    const status = exception.getStatus();
-    const exceptionResponse = exception.getResponse();
 
-    // TODO: Implement comprehensive error handling
-    // This filter should:
-    // 1. Log errors appropriately based on their severity
-    // 2. Format error responses in a consistent way
-    // 3. Include relevant error details without exposing sensitive information
-    // 4. Handle different types of errors with appropriate status codes
+    let status: number;
+    let message: string | string[];
+    let error: string | undefined;
 
-    this.logger.error(
-      `HTTP Exception: ${exception.message}`,
-      exception.stack,
-    );
+    // Differentiate between known HttpExceptions and unexpected errors
+    if (exception instanceof HttpException) {
+      status = exception.getStatus();
+      const exceptionResponse = exception.getResponse();
 
-    // Basic implementation (to be enhanced by candidates)
+      if (typeof exceptionResponse === 'string') {
+        message = exceptionResponse;
+      } else if (
+        typeof exceptionResponse === 'object' &&
+        (exceptionResponse as any).message
+      ) {
+        message = (exceptionResponse as any).message;
+        error = (exceptionResponse as any).error;
+      } else {
+        message = exception.message;
+      }
+    } else {
+      status = HttpStatus.INTERNAL_SERVER_ERROR;
+      message = 'Internal server error';
+    }
+
+    // Log critical vs client errors differently
+    if (status >= 500) {
+      this.logger.error(
+        `Server error on ${request.method} ${request.url}`,
+        (exception as any)?.stack,
+      );
+    } else {
+      this.logger.warn(
+        `Client error ${status} on ${request.method} ${request.url} → ${JSON.stringify(
+          message,
+        )}`,
+      );
+    }
+
+    // Unified JSON response format
     response.status(status).json({
       success: false,
       statusCode: status,
-      message: exception.message,
-      path: request.url,
       timestamp: new Date().toISOString(),
+      path: request.url,
+      method: request.method,
+      message,
+      ...(error ? { error } : {}),
     });
   }
-} 
+}
