@@ -1,4 +1,4 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { Injectable, NotFoundException, HttpException, HttpStatus } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { User } from './entities/user.entity';
@@ -14,6 +14,12 @@ export class UsersService {
   ) {}
 
   async create(createUserDto: CreateUserDto): Promise<User> {
+
+    const existing = await this.usersRepository.findOne({ where: { email: createUserDto.email } });
+    if (existing) {
+      throw new HttpException('Email already registered', HttpStatus.CONFLICT);
+    }
+
     const hashedPassword = await bcrypt.hash(createUserDto.password, 10);
     const user = this.usersRepository.create({
       ...createUserDto,
@@ -40,6 +46,15 @@ export class UsersService {
 
   async update(id: string, updateUserDto: UpdateUserDto): Promise<User> {
     const user = await this.findOne(id);
+
+    if (updateUserDto.email) {
+      const existing = await this.usersRepository.findOne({
+        where: { email: updateUserDto.email },
+      });
+      if (existing && existing.id !== id) {
+        throw new HttpException('Email already registered', HttpStatus.CONFLICT);
+      }
+    }
     
     if (updateUserDto.password) {
       updateUserDto.password = await bcrypt.hash(updateUserDto.password, 10);

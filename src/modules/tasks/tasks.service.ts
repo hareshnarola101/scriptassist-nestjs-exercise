@@ -292,7 +292,8 @@ export class TasksService {
           const res = await repo
             .manager
             .createQueryBuilder()
-            .softDelete()
+            .delete()
+            .from(Task)
             .where('id IN (:...ids)', { ids })
             .execute();
 
