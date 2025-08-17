@@ -1,10 +1,10 @@
 import { Injectable, CanActivate, ExecutionContext, Inject, HttpException, HttpStatus, Logger } from '@nestjs/common';
 import { Reflector } from '@nestjs/core';
-import { Observable } from 'rxjs';
 import { RATE_LIMIT_KEY, RateLimitOptions } from '../../common/decorators/rate-limit.decorator';
-import { RateLimiterRedis } from 'rate-limiter-flexible';
+import { RateLimiterRedis, RateLimiterRes } from 'rate-limiter-flexible';
 import type Redis from 'ioredis';
 import * as crypto from 'crypto';
+import { REDIS } from '../../modules/redis/redis.module';
 
 /**
  * RateLimitGuard
@@ -18,7 +18,6 @@ import * as crypto from 'crypto';
  * - Provide 'REDIS' provider in DI that yields an ioredis client (see module snippet below).
  * - Recommended to set `app.set('trust proxy', true)` in express if behind proxy so req.ip is correct.
  */
-const requestRecords: Record<string, { count: number, timestamp: number }[]> = {};
 
 @Injectable()
 export class RateLimitGuard implements CanActivate {
@@ -55,7 +54,7 @@ export class RateLimitGuard implements CanActivate {
     const key = this.buildKey(user, rawIp);
 
     // If Redis client is available, use rate-limiter-flexible with Redis store (distributed)
-    if (this.redisClient) {
+    if (this.redisClient && (this.redisClient as any).status === 'ready') {
       const limiter = this.getOrCreateLimiter(limit.points, limit.duration);
       try {
         // consume 1 point for this request

@@ -4,6 +4,7 @@ import { User } from '../../modules/users/entities/user.entity';
 import { Task } from '../../modules/tasks/entities/task.entity';
 import { users } from './seed-data/users.seed';
 import { tasks } from './seed-data/tasks.seed';
+import { UserRole } from '../../modules/users/enums/user-role.enum';
 
 // Load environment variables
 config();
@@ -33,7 +34,11 @@ async function main() {
     console.log('Existing data cleared');
 
     // Seed users
-    await AppDataSource.getRepository(User).save(users);
+    const usersWithEnumRole = users.map(user => ({
+      ...user,
+      role: UserRole[user.role as keyof typeof UserRole],
+    }));
+    await AppDataSource.getRepository(User).save(usersWithEnumRole);
     console.log('Users seeded successfully');
 
     // Seed tasks

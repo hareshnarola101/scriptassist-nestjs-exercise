@@ -4,6 +4,8 @@ import { BullModule } from '@nestjs/bullmq';
 import { TasksService } from './tasks.service';
 import { TasksController } from './tasks.controller';
 import { Task } from './entities/task.entity';
+import { AuthModule } from '../auth/auth.module';
+import { RedisModule } from '../redis/redis.module';
 
 @Module({
   imports: [
@@ -18,9 +20,11 @@ import { Task } from './entities/task.entity';
         },
       },
     }),
+    AuthModule,
+    RedisModule,
   ],
   controllers: [TasksController],
   providers: [TasksService],
-  exports: [TasksService],
+  exports: [TypeOrmModule, TasksService, BullModule],
 })
 export class TasksModule {} 

@@ -62,12 +62,11 @@ import { CacheService } from './common/services/cache.service';
       isGlobal: true,
       imports: [ConfigModule],
       inject: [ConfigService],
-      useFactory: (config: ConfigService) => ({
-        store: 'redis',
-        host: config.get<string>('REDIS_HOST'),
-        port: config.get<number>('REDIS_PORT'),
-        ttl: config.get<number>('CACHE_TTL') || 60, // default 60s
-        max: config.get<number>('CACHE_MAX') || 1000, // default max items
+      useFactory: async (config: ConfigService) => ({
+        store: 'ioredis', // use string identifier for cache-manager-ioredis-yet
+        host: config.get<string>('REDIS_HOST') || '127.0.0.1',
+        port: parseInt(config.get<string>('REDIS_PORT') || '6379', 10),
+        ttl: parseInt(config.get<string>('CACHE_TTL') || '60', 10), // must be > 0
       }),
     }),
     
@@ -100,6 +99,17 @@ import { CacheService } from './common/services/cache.service';
   ],
   providers: [
     {
+      provide: 'REDIS',
+      useFactory: () => {
+        // Adjust connection config as needed
+        return new Redis({
+          host: process.env.REDIS_HOST || '127.0.0.1',
+          port: parseInt(process.env.REDIS_PORT || '6379', 10),
+          password: process.env.REDIS_PASSWORD || undefined,
+        });
+      },
+    },
+    {
       provide: APP_GUARD,
       useClass: RateLimitGuard, // Global rate limit guard
     },
@@ -107,7 +117,6 @@ import { CacheService } from './common/services/cache.service';
   ],
   exports: [
     CacheService,
-    ThrottlerStorageRedisService, // Export for use in other modules
   ],
 })
 export class AppModule {} 
