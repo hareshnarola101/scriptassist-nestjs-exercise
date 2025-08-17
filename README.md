@@ -1,254 +1,186 @@
-# TaskFlow API - Senior Backend Engineer Coding Challenge
+# TaskFlow API – Refactored Solution
 
-## Introduction
+## Overview
 
-Welcome to the TaskFlow API coding challenge! This project is designed to evaluate the skills of experienced backend engineers in identifying and solving complex architectural problems using our technology stack.
+This project is my submission for the **TaskFlow API – Senior Backend Engineer Coding Challenge**.
+Over the last 2 days, I identified and resolved critical **performance, architectural, and security** issues. The goal was to refactor the existing NestJS + TypeORM + BullMQ (Redis) codebase into a **scalable, secure, and production-ready system**.
 
-The TaskFlow API is a task management system with significant scalability, performance, and security challenges that need to be addressed. The codebase contains intentional anti-patterns and inefficiencies that require thoughtful refactoring and architectural improvements.
+---
 
-## Tech Stack
-
-- **Language**: TypeScript
-- **Framework**: NestJS
-- **ORM**: TypeORM with PostgreSQL
-- **Queue System**: BullMQ with Redis
-- **API Style**: REST with JSON
-- **Package Manager**: Bun
-- **Testing**: Bun test
-
-## Getting Started
-
-### Prerequisites
-
-- Node.js (v16+)
-- Bun (latest version)
-- PostgreSQL
-- Redis
-
-### Setup Instructions
-
-1. Clone this repository
-2. Install dependencies:
-   ```bash
-   bun install
-   ```
-3. Configure environment variables by copying `.env.example` to `.env`:
-   ```bash
-   cp .env.example .env
-   # Update the .env file with your database and Redis connection details
-   ```
-4. Database Setup:
-   
-   Ensure your PostgreSQL database is running, then create a database:
-   ```bash
-   # Using psql
-   psql -U postgres
-   CREATE DATABASE taskflow;
-   \q
-   
-   # Or using createdb
-   createdb -U postgres taskflow
-   ```
-   
-   Build the TypeScript files to ensure the migrations can be run:
-   ```bash
-   bun run build
-   ```
-
-5. Run database migrations:
-   ```bash
-   # Option 1: Standard migration (if "No migrations are pending" but tables aren't created)
-   bun run migration:run
-   
-   # Option 2: Force table creation with our custom script
-   bun run migration:custom
-   ```
-   
-   Our custom migration script will:
-   - Try to run formal migrations first
-   - If no migrations are executed, it will directly create the necessary tables
-   - It provides detailed logging to help troubleshoot database setup issues
-
-6. Seed the database with initial data:
-   ```bash
-   bun run seed
-   ```
-   
-7. Start the development server:
-   ```bash
-   bun run start:dev
-   ```
-
-### Troubleshooting Database Issues
-
-If you continue to have issues with database connections:
-
-1. Check that PostgreSQL is properly installed and running:
-   ```bash
-   # On Linux/Mac
-   systemctl status postgresql
-   # or
-   pg_isready
-   
-   # On Windows
-   sc query postgresql
-   ```
-
-2. Verify your database credentials by connecting manually:
-   ```bash
-   psql -h localhost -U postgres -d taskflow
-   ```
-
-3. If needed, manually create the schema from the migration files:
-   - Look at the SQL in `src/database/migrations/`
-   - Execute the SQL manually in your database
-
-### Default Users
-
-The seeded database includes two users:
-
-1. Admin User:
-   - Email: admin@example.com
-   - Password: admin123
-   - Role: admin
-
-2. Regular User:
-   - Email: user@example.com
-   - Password: user123
-   - Role: user
-
-## Challenge Overview
-
-This codebase contains a partially implemented task management API that suffers from various architectural, performance, and security issues. Your task is to analyze, refactor, and enhance the codebase to create a production-ready, scalable, and secure application.
-
-## Core Problem Areas
-
-The codebase has been intentionally implemented with several critical issues that need to be addressed:
+## 🔍 Core Problems Identified
 
 ### 1. Performance & Scalability Issues
 
-- N+1 query problems throughout the application
-- Inefficient in-memory filtering and pagination that won't scale
-- Excessive database roundtrips in batch operations
-- Poorly optimized data access patterns
+* Inefficient **N+1 queries** for tasks and user relationships.
+* In-memory filtering & pagination → caused memory pressure on large datasets.
+* Batch operations (complete/delete tasks) triggered **excessive DB roundtrips**.
+* No caching layer; every request hit PostgreSQL.
 
 ### 2. Architectural Weaknesses
 
-- Inappropriate separation of concerns (e.g., controllers directly using repositories)
-- Missing domain abstractions and service boundaries
-- Lack of transaction management for multi-step operations
-- Tightly coupled components with high interdependency
+* Controllers were directly calling repositories → violating separation of concerns.
+* No **transaction handling** in multi-step operations.
+* Missing **Redis integration** for distributed systems.
+* Poorly implemented background jobs (BullMQ queue not processing correctly).
 
-### 3. Security Vulnerabilities
+### 3. Security Gaps
 
-- Inadequate authentication mechanism with several vulnerabilities
-- Improper authorization checks that can be bypassed
-- Unprotected sensitive data exposure in error responses
-- Insecure rate limiting implementation
+* Authentication was minimal, no **JWT refresh tokens**.
+* Authorization checks missing in sensitive routes.
+* Raw error messages exposed DB internals.
+* No input sanitization or rate limiting.
 
-### 4. Reliability & Resilience Gaps
+### 4. Reliability & Resilience
 
-- Ineffective error handling strategies
-- Missing retry mechanisms for distributed operations
-- Lack of graceful degradation capabilities
-- In-memory caching that fails in distributed environments
+* Job workers failing silently, no retry/backoff mechanism.
+* Missing caching invalidation.
+* No structured logging or observability hooks.
 
-## Implementation Requirements
+---
 
-Your implementation should address the following areas:
+## ✅ Improvements Made
 
-### 1. Performance Optimization
+### 1. Authentication & Security
 
-- Implement efficient database query strategies with proper joins and eager loading
-- Create a performant filtering and pagination system
-- Optimize batch operations with bulk database operations
-- Add appropriate indexing strategies
+* Implemented **JWT-based authentication** with access & refresh tokens.
+* Added **role-based authorization (RBAC)** for admin/user separation.
+* Secured error responses with standardized error format.
+* Added request-level validation with `class-validator` to sanitize payloads.
 
-### 2. Architectural Improvements
+### 2. Redis Caching Layer
 
-- Implement proper domain separation and service abstractions
-- Create a consistent transaction management strategy
-- Apply SOLID principles throughout the codebase
-- Implement at least one advanced pattern (e.g., CQRS, Event Sourcing)
+* Integrated **Redis cache** for:
 
-### 3. Security Enhancements
+  * Frequently accessed tasks (`GET /tasks`).
+  * User authentication sessions.
+* Implemented **cache invalidation** on task create/update/delete.
+* Added TTL (time-to-live) for cache entries to prevent stale data.
 
-- Strengthen authentication with refresh token rotation
-- Implement proper authorization checks at multiple levels
-- Create a secure rate limiting system
-- Add data validation and sanitization
+### 3. Batch Operations Fix
 
-### 4. Resilience & Observability
+* Fixed `/tasks/batch` endpoint:
 
-- Implement comprehensive error handling and recovery mechanisms
-- Add proper logging with contextual information
-- Create meaningful health checks
-- Implement at least one observability pattern
+  * **`complete`** → marks multiple tasks as completed.
+  * **`delete`** → deletes multiple tasks in one bulk DB query (instead of N queries).
+* Improved error handling with clear responses per operation.
 
-## Advanced Challenge Areas
+### 4. BullMQ Job Queue Fix
 
-For senior engineers, we expect solutions to also address:
+* Fixed **sample job worker** (`DispatchSampleFeeRefund` equivalent) to properly consume jobs.
+* Added:
 
-### 1. Distributed Systems Design
+  * Retry strategy with exponential backoff.
+  * Dead-letter queue (DLQ) for failed jobs.
+  * Logging on job success/failure.
+* Verified job persistence works with Redis (not in-memory).
 
-- Create solutions that work correctly in multi-instance deployments
-- Implement proper distributed caching with invalidation strategies
-- Handle concurrent operations safely
-- Design for horizontal scaling
+### 5. Architectural Refactor
 
-### 2. System Reliability
+* Introduced **Service Layer** → controllers now delegate business logic to services.
+* Added **transaction handling** via `QueryRunner` in TypeORM for multi-task ops.
+* Applied **SOLID principles** for maintainability.
+* Improved folder structure for modularity (auth, tasks, jobs, common utils).
 
-- Implement circuit breakers for external service calls
-- Create graceful degradation pathways for non-critical features
-- Add self-healing mechanisms
-- Design fault isolation boundaries
+---
 
-### 3. Performance Under Load
+## ⚡ Technical Decisions & Rationale
 
-- Optimize for high throughput scenarios
-- Implement backpressure mechanisms
-- Create efficient resource utilization strategies
-- Design for predictable performance under varying loads
+| Decision                             | Rationale                                | Tradeoffs                                 |
+| ------------------------------------ | ---------------------------------------- | ----------------------------------------- |
+| Use **JWT + refresh token rotation** | Improves session security & scalability  | Requires extra token store in Redis       |
+| Add **Redis cache for tasks**        | Huge performance gain on frequent reads  | Must handle invalidation carefully        |
+| Fix **batch ops with bulk queries**  | Reduces DB load significantly            | Harder to give per-task error granularity |
+| Implement **BullMQ retry/DLQ**       | Improves reliability in distributed jobs | Slight complexity in monitoring           |
+| Add **service layer abstraction**    | Clean separation, easier to test         | Initial refactor cost was high            |
 
-## Evaluation Criteria
+---
 
-Your solution will be evaluated on:
+## 🚀 How to Run
 
-1. **Problem Analysis**: How well you identify and prioritize the core issues
-2. **Technical Implementation**: The quality and cleanliness of your code
-3. **Architectural Thinking**: Your approach to solving complex design problems
-4. **Performance Improvements**: Measurable enhancements to system performance
-5. **Security Awareness**: Your identification and remediation of vulnerabilities
-6. **Testing Strategy**: The comprehensiveness of your test coverage
-7. **Documentation**: The clarity of your explanation of key decisions
+### Prerequisites
 
-## Submission Guidelines
+* Node.js v16+
+* Bun (latest)
+* PostgreSQL
+* Redis
 
-1. Fork this repository to your own GitHub account
-2. Make regular, meaningful commits that tell a story
-3. Create a comprehensive README.md in your forked repository containing:
-   - Analysis of the core problems you identified
-   - Overview of your architectural approach
-   - Performance and security improvements made
-   - Key technical decisions and their rationale
-   - Any tradeoffs you made and why
-4. Ensure your repository is public so we can review your work
-5. Submit the link to your public GitHub repository
+### Setup
 
-## API Endpoints
+```bash
+# Clone repository
+git clone https://github.com/hareshnarolacs/scriptassist-nestjs-exercise.git
+cd taskflow
 
-The API should expose the following endpoints:
+# Install dependencies
+bun install
 
-### Authentication
-- `POST /auth/login` - Authenticate a user
-- `POST /auth/register` - Register a new user
+# Setup env
+cp .env.example .env
+# → update PostgreSQL & Redis credentials
+
+# DB setup
+bun run build
+bun run migration:run
+bun run seed
+
+# Start server
+bun run start:dev
+```
+
+---
+
+## 🔐 Default Users
+
+**Admin**
+
+* Email: `admin@example.com`
+* Password: `admin123`
+
+**User**
+
+* Email: `user@example.com`
+* Password: `user123`
+
+---
+
+## 📌 API Endpoints
+
+### Auth
+
+* `POST /auth/login` – login with email/password
+* `POST /auth/register` – register new user
+* `POST /auth/refresh` – refresh access token
 
 ### Tasks
-- `GET /tasks` - List tasks with filtering and pagination
-- `GET /tasks/:id` - Get task details
-- `POST /tasks` - Create a task
-- `PATCH /tasks/:id` - Update a task
-- `DELETE /tasks/:id` - Delete a task
-- `POST /tasks/batch` - Batch operations on tasks
 
-Good luck! This challenge is designed to test the skills of experienced engineers in creating scalable, maintainable, and secure systems.
+* `GET /tasks` – list tasks (with filtering + pagination + Redis cache)
+* `GET /tasks/:id` – task details
+* `POST /tasks` – create task
+* `PATCH /tasks/:id` – update task
+* `DELETE /tasks/:id` – delete task
+* `POST /tasks/batch` – bulk complete/delete tasks
+
+### Jobs
+
+* Background jobs processed with BullMQ + Redis
+* Example: `DispatchSampleFeeRefund` now works with retries + DLQ
+
+---
+
+## 📊 Observability
+
+* Added structured **logging** (success/failure logs for tasks & jobs).
+* Error responses standardized for debugging.
+
+---
+
+## 🏆 Conclusion
+
+This refactor makes **TaskFlow API**:
+
+* **Faster** (optimized queries + Redis cache)
+* **Safer** (JWT, RBAC, validation)
+* **More reliable** (fixed job queues, retries, transactions)
+* **Cleaner architecture** (service layer, SOLID principles)
+
+---
