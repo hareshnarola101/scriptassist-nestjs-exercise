@@ -5,6 +5,8 @@ import { BullModule } from '@nestjs/bullmq';
 import { ThrottlerModule } from '@nestjs/throttler';
 import { ScheduleModule } from '@nestjs/schedule';
 import { UsersModule } from './modules/users/users.module';
+import { ThrottlerStorageRedisService } from './common/services/throttler-storage-redis.service';
+import Redis from 'ioredis';
 import { TasksModule } from './modules/tasks/tasks.module';
 import { AuthModule } from './modules/auth/auth.module';
 import { TaskProcessorModule } from './queues/task-processor/task-processor.module';
@@ -13,7 +15,7 @@ import { RateLimitGuard } from './common/guards/rate-limit.guard';
 
 import { APP_GUARD } from '@nestjs/core';
 import { CacheModule } from '@nestjs/cache-manager';
-import * as redisStore from 'cache-manager-ioredis-yet';
+import * as redisStore from 'cache-manager-redis-store';
 
 @Module({
   imports: [
@@ -50,6 +52,8 @@ import * as redisStore from 'cache-manager-ioredis-yet';
         connection: {
           host: configService.get('REDIS_HOST'),
           port: configService.get('REDIS_PORT'),
+          maxRetriesPerRequest: null,
+          enableReadyCheck: false,
         },
       }),
     }),
@@ -59,10 +63,11 @@ import * as redisStore from 'cache-manager-ioredis-yet';
       imports: [ConfigModule],
       inject: [ConfigService],
       useFactory: (config: ConfigService) => ({
-        store: redisStore,
+        store: 'redis',
         host: config.get<string>('REDIS_HOST'),
         port: config.get<number>('REDIS_PORT'),
         ttl: config.get<number>('CACHE_TTL') || 60, // default 60s
+        max: config.get<number>('CACHE_MAX') || 1000, // default max items
       }),
     }),
     
@@ -72,8 +77,14 @@ import * as redisStore from 'cache-manager-ioredis-yet';
       inject: [ConfigService],
       useFactory: (configService: ConfigService) => ([
         {
-          ttl: 60,
-          limit: 10,
+          ttl: configService.get<number>('THROTTLE_TTL') || 60, // default 60s
+          limit: configService.get<number>('THROTTLE_LIMIT') || 10, // default 10 requests
+          storage: new ThrottlerStorageRedisService(
+          new Redis({
+            host: configService.get('REDIS_HOST'),
+            port: configService.get('REDIS_PORT'),
+          })
+        ),
         },
       ]),
     }),
