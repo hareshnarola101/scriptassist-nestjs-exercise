@@ -15,7 +15,7 @@ import { RateLimitGuard } from './common/guards/rate-limit.guard';
 
 import { APP_GUARD } from '@nestjs/core';
 import { CacheModule } from '@nestjs/cache-manager';
-import * as redisStore from 'cache-manager-redis-store';
+import { CacheService } from './common/services/cache.service';
 
 @Module({
   imports: [
@@ -103,6 +103,11 @@ import * as redisStore from 'cache-manager-redis-store';
       provide: APP_GUARD,
       useClass: RateLimitGuard, // Global rate limit guard
     },
+    CacheService,
+  ],
+  exports: [
+    CacheService,
+    ThrottlerStorageRedisService, // Export for use in other modules
   ],
 })
 export class AppModule {} 
