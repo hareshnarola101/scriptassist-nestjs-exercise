@@ -4,6 +4,7 @@ import { UsersService } from '../users/users.service';
 import { LoginDto } from './dto/login.dto';
 import { RegisterDto } from './dto/register.dto';
 import * as bcrypt from 'bcrypt';
+import { RefreshDto } from './dto/refresh.dto';
 
 @Injectable()
 export class AuthService {
@@ -63,6 +64,27 @@ export class AuthService {
       },
       token,
     };
+  }
+
+  async refreshToken(refreshDto: RefreshDto) {
+    try {
+      // Verify the refresh token
+      const decoded = this.jwtService.verify(refreshDto.refreshToken);
+
+      const user = await this.usersService.findOne(decoded.sub);
+      if (!user) {
+        throw new UnauthorizedException('User not found');
+      }
+
+      const payload = { sub: user.id, email: user.email, role: user.role };
+
+      return {
+        access_token: this.jwtService.sign(payload, { expiresIn: '15m' }),
+        refresh_token: this.jwtService.sign(payload, { expiresIn: '7d' }), // rotating refresh token
+      };
+    } catch (err) {
+      throw new UnauthorizedException('Invalid refresh token');
+    }
   }
 
   private generateToken(userId: string) {
