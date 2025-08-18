@@ -36,7 +36,10 @@ import { APP_INTERCEPTOR } from '@nestjs/core';
     UsersModule,
   ],
   controllers: [TasksController],
-  providers: [TasksService],
+  providers: [TasksService, {
+    provide: APP_INTERCEPTOR,
+    useClass: LoggingInterceptor,
+  }],
   exports: [TypeOrmModule, TasksService, BullModule],
 })
 export class TasksModule { } 

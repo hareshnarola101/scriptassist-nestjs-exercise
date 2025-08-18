@@ -101,11 +101,11 @@ export class TasksService {
    * Cursor-style pagination with relations loaded in one query.
    * Controller should pass limit & cursor; this returns { items, nextCursor }
    */
-  async findAll(userId: string, filters: TaskFilterDto): Promise<PaginatedResponse<TaskResponseDto>> {
+  async findAll(userId: string, userRole: string, filters: TaskFilterDto): Promise<PaginatedResponse<TaskResponseDto>> {
     try {
       const qb = this.tasksRepository.createQueryBuilder('task');
 
-      this.applyFilters(qb, filters, userId);
+      this.applyFilters(qb, filters, userId, userRole);
 
       // Sorting
       qb.orderBy(`task.${filters.sortBy ?? 'createdAt'}`, filters.sortOrder ?? 'DESC');
@@ -136,10 +136,14 @@ export class TasksService {
     }
   }
 
-  private applyFilters(qb: SelectQueryBuilder<Task>, filters: TaskFilterDto, userId: string): void {
+  private applyFilters(qb: SelectQueryBuilder<Task>, filters: TaskFilterDto, userId: string, userRole: string): void {
     if (filters.status) qb.andWhere('task.status = :status', { status: filters.status });
     if (filters.priority) qb.andWhere('task.priority = :priority', { priority: filters.priority });
-    if (userId) qb.andWhere('task.userId = :userId', { userId });
+    
+    if (userRole !== 'admin') {
+      qb.andWhere('task.userId = :userId', { userId });
+    }
+
     if (filters.search) {
       qb.andWhere('(task.title ILIKE :search OR task.description ILIKE :search)', {
         search: `%${filters.search}%`,

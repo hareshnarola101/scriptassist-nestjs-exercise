@@ -18,7 +18,7 @@ export class RefreshToken {
   @Column({ default: false })
   isRevoked: boolean;
 
-  @ManyToOne('User', (user:User) => user.refreshTokens)
+  @ManyToOne(() => User, (user) => user.refreshTokens)
   @JoinColumn({ name: 'userId' })
   user: User;
 

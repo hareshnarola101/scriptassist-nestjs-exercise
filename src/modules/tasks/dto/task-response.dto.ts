@@ -30,6 +30,4 @@ export class TaskResponseDto {
   @ApiProperty({ example: '2023-01-01T00:00:00.000Z' })
   updatedAt: Date;
 
-  @ApiProperty({ example: '123e4567-e89b-12d3-a456-426614174001', required: false })
-  assigneeId?: string; // Optional, can be null if not assigned
 } 

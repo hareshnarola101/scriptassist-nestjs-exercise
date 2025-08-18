@@ -10,6 +10,8 @@ import { UserResponseDto } from '../users/dto/user-response.dto';
 import type { Request } from 'express';
 import { HttpExceptionFilter } from '@common/filters/http-exception.filter';
 import { ApiTags } from '@nestjs/swagger';
+import { LogOutDto } from './dto/logout.dto';
+import { ApiBearerAuth } from '@nestjs/swagger';
 
 @ApiTags('auth')
 @Controller('auth')
@@ -36,18 +38,19 @@ export class AuthController {
   }
 
   @Post('logout')
+  @ApiBearerAuth()
   @UseGuards(JwtAuthGuard)
   @HttpCode(HttpStatus.NO_CONTENT)
   async logout(
     @CurrentUser() user: UserResponseDto,
     @Req() request: Request,
-    @Body() body: { deviceId: string }
+    @Body() logoutDto: LogOutDto
   ): Promise<void> {
     const authHeader = request.header('authorization');
     const token = authHeader?.split(' ')[1];
     
     if (token) {
-      await this.authService.logout(user.id, token, body.deviceId);
+      await this.authService.logout(user.id, token, logoutDto.deviceId);
     }
   }
 } 

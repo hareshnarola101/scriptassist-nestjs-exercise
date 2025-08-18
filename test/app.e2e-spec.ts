@@ -1,42 +1,18 @@
-import { Test, TestingModule } from '@nestjs/testing';
-import { INestApplication, ValidationPipe } from '@nestjs/common';
-import * as request from 'supertest';
-import { AppModule } from '../src/app.module';
-
-jest.setTimeout(600000);
+import { initializeTestApp, getTestApp, closeTestApp, supertest } from './jest-setup';
 
 describe('AppController (e2e)', () => {
-  let app: INestApplication;
-
-  beforeEach(async () => {
-    const moduleFixture: TestingModule = await Test.createTestingModule({
-      imports: [AppModule],
-    }).compile();
-
-    app = moduleFixture.createNestApplication();
-
-    // Apply the same pipes used in the main application
-    app.useGlobalPipes(
-      new ValidationPipe({
-        whitelist: true,
-        transform: true,
-        forbidNonWhitelisted: true,
-        transformOptions: {
-          enableImplicitConversion: true,
-        },
-      }),
-    );
-
-    await app.init();
+  beforeAll(async () => {
+    await initializeTestApp();
   });
 
-  afterEach(async () => {
-    await app.close();
+  afterAll(async () => {
+    await closeTestApp();
   });
 
   it('/ (GET) - should be protected', () => {
-    return request(app.getHttpServer()).get('/').expect(401);
+    return supertest(getTestApp().getHttpServer())
+      .get('/')
+      .expect(401);
   });
 
-  // Add more tests as needed
 });

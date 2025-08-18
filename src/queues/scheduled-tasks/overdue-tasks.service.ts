@@ -51,30 +51,33 @@ export class OverdueTasksService {
           },
           take: this.BATCH_SIZE,
           skip: i,
+          select: ['id']
         });
 
+        // Extract just the IDs
+        const taskIds = overdueTasks.map(task => task.id);
+
         // Add batch to queue
-        await this.taskQueue.addBulk(
-          overdueTasks.map(task => ({
-            name: 'overdue-tasks-notification',
-            data: { 
-              taskId: task.id,
-              dueDate: task.dueDate,
+        await this.taskQueue.add(
+          'overdue-tasks-notification',
+          { 
+            taskIds, // Now passing an array of IDs
+            batchNumber: Math.floor(i / this.BATCH_SIZE) + 1,
+            totalBatches: Math.ceil(overdueCount / this.BATCH_SIZE)
+          },
+          {
+            attempts: 3,
+            backoff: {
+              type: 'exponential',
+              delay: 1000,
             },
-            opts: {
-              attempts: 3,
-              backoff: {
-                type: 'exponential',
-                delay: 1000,
-              },
-            },
-          }))
+          }
         );
 
-        this.logger.debug(`Processed batch ${i}-${i + overdueTasks.length}`);
+        this.logger.debug(`Queued batch ${i / this.BATCH_SIZE + 1} with ${taskIds.length} tasks`);
       }
 
-      this.logger.log(`Successfully queued ${overdueCount} overdue tasks`);
+      this.logger.log(`Successfully queued ${overdueCount} overdue tasks in ${Math.ceil(overdueCount / this.BATCH_SIZE)} batches`);
     } catch (error) {
       this.logger.error(
         'Failed to process overdue tasks',

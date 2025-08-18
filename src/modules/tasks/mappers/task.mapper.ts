@@ -14,7 +14,6 @@ export class TaskMapper {
       createdAt: task.createdAt,
       updatedAt: task.updatedAt,
       userId: task.userId,
-      assigneeId: task.assigneeId,
     };
   }
 

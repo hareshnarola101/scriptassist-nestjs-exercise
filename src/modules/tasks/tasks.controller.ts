@@ -67,6 +67,7 @@ export class TasksController {
     // Service handles DB-level filtering & cursor pagination
     const tasks = await this.tasksService.findAll(
       user.id,
+      user.role,
       {
       limit: filter.limit,
       cursor: filter.cursor,
