@@ -8,7 +8,7 @@ async function runMigrations() {
     // Initialize connection
     await dataSource.initialize();
     console.log('Database connection initialized successfully.');
-    
+
     // Log pending migrations
     const pendingMigrations = await dataSource.showMigrations();
     console.log(`Pending migrations: ${pendingMigrations ? 'Yes' : 'No'}`);
@@ -20,6 +20,8 @@ async function runMigrations() {
     console.log(`Executed ${migrations.length} migrations:`);
     migrations.forEach(migration => console.log(`- ${migration.name}`));
 
+    // Create tables fresh
+    console.log('Creating new tables...');
     if (migrations.length === 0) {
       console.log('No migrations were executed. Creating tables directly...');
       
@@ -33,7 +35,8 @@ async function runMigrations() {
           "password" varchar NOT NULL,
           "role" varchar NOT NULL DEFAULT 'user',
           "created_at" TIMESTAMP NOT NULL DEFAULT now(),
-          "updated_at" TIMESTAMP NOT NULL DEFAULT now()
+          "updated_at" TIMESTAMP NOT NULL DEFAULT now(),
+          "refreshTokens" varchar NULL
         )
       `);
       
@@ -50,6 +53,20 @@ async function runMigrations() {
           "created_at" TIMESTAMP NOT NULL DEFAULT now(),
           "updated_at" TIMESTAMP NOT NULL DEFAULT now(),
           CONSTRAINT "fk_user_id" FOREIGN KEY ("user_id") REFERENCES "users" ("id") ON DELETE CASCADE
+        )
+      `);
+
+      console.log('Creating refresh token table...');
+      await dataSource.query(`
+        CREATE TABLE IF NOT EXISTS "refresh_token" (
+          "id" uuid PRIMARY KEY DEFAULT uuid_generate_v4(),
+          "token" varchar NOT NULL,
+          "device_id" varchar NOT NULL,
+          "expires_at" TIMESTAMP NOT NULL,
+          "is_revoked" boolean NOT NULL DEFAULT false,
+          "user_id" uuid NOT NULL,
+          "created_at" TIMESTAMP NOT NULL DEFAULT now(),
+          CONSTRAINT "fk_refresh_token_user_id" FOREIGN KEY ("user_id") REFERENCES "users" ("id") ON DELETE CASCADE
         )
       `);
       

@@ -2,6 +2,7 @@ import { DataSource } from 'typeorm';
 import { config } from 'dotenv';
 import { User } from '../../modules/users/entities/user.entity';
 import { Task } from '../../modules/tasks/entities/task.entity';
+import { RefreshToken} from '../../modules/auth/entities/refresh-token.entity';
 import { users } from './seed-data/users.seed';
 import { tasks } from './seed-data/tasks.seed';
 import { UserRole } from '../../modules/users/enums/user-role.enum';
@@ -17,7 +18,7 @@ const AppDataSource = new DataSource({
   username: process.env.DB_USERNAME || 'postgres',
   password: process.env.DB_PASSWORD || 'postgres',
   database: process.env.DB_DATABASE || 'taskflow',
-  entities: [User, Task],
+  entities: [User, Task, RefreshToken],
   synchronize: false,
 });
 
@@ -29,6 +30,7 @@ async function main() {
     console.log('Database connection initialized');
 
     // Clear existing data
+    await AppDataSource.getRepository(RefreshToken).delete({});
     await AppDataSource.getRepository(Task).delete({});
     await AppDataSource.getRepository(User).delete({});
     console.log('Existing data cleared');
