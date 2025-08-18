@@ -68,4 +68,23 @@ export class UsersService {
     const user = await this.findOne(id);
     await this.usersRepository.remove(user);
   }
+
+  async validatePassword(userId: string, password: string): Promise<boolean> {
+    const user = await this.usersRepository.findOne({
+      where: { id: userId },
+      select: ['id', 'password'],
+    });
+  
+    if (!user) {
+      return false;
+    }
+  
+    try {
+      return await bcrypt.compare(password, user.password);
+    } catch (error) {
+      // Log the error for debugging purposes
+      console.error('Error validating password:', error);
+      return false;
+    }
+  }
 } 

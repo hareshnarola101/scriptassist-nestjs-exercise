@@ -3,6 +3,7 @@ import { Task } from '../../tasks/entities/task.entity';
 import { Exclude } from 'class-transformer';
 import * as bcrypt from 'bcrypt';
 import { UserRole } from '../enums/user-role.enum';
+import { RefreshToken } from '../../auth/entities/refresh-token.entity';
 
 @Entity('users')
 export class User {
@@ -34,6 +35,9 @@ export class User {
 
   @UpdateDateColumn({ name: 'updated_at' })
   updatedAt: Date;
+
+  @OneToMany(() => RefreshToken, (refreshToken) => refreshToken.user, { cascade: ['insert', 'update'], onDelete: 'CASCADE' })
+  refreshTokens: RefreshToken[];
 
   @BeforeInsert()
   async prepareData() {

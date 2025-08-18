@@ -7,4 +7,9 @@ export class RefreshDto {
   @IsNotEmpty()
   @IsString()
   refreshToken: string;
+
+  @ApiProperty({ example: 'test-device' })
+  @IsNotEmpty()
+  @IsString()
+  deviceId: string;
 }

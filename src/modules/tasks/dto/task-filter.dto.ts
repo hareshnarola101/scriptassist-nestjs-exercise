@@ -90,4 +90,9 @@ export class TaskFilterDto {
   @IsOptional()
   @IsIn(['ASC', 'DESC'])
   sortOrder?: 'ASC' | 'DESC' = 'DESC';
+
+  @ApiPropertyOptional({ type: String, format: 'uuid', description: 'Filter by assignee id' })
+  @IsOptional()
+  @IsUUID()
+  assigneeId?: string;
 }

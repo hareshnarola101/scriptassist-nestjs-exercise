@@ -1,34 +1,48 @@
 import { Injectable, UnauthorizedException } from '@nestjs/common';
 import { PassportStrategy } from '@nestjs/passport';
 import { ExtractJwt, Strategy } from 'passport-jwt';
+import type { Request } from 'express';
 import { ConfigService } from '@nestjs/config';
-import { UsersService } from '../../users/users.service';
+import { TokenPayload } from '../interfaces/token-payload.interface';
+import { AuthService } from '../services/auth.service';
 
 @Injectable()
 export class JwtStrategy extends PassportStrategy(Strategy) {
   constructor(
-    private configService: ConfigService,
-    private usersService: UsersService,
+    private readonly configService: ConfigService,
+    private readonly authService: AuthService,
   ) {
     super({
-      jwtFromRequest: ExtractJwt.fromAuthHeaderAsBearerToken(),
-      ignoreExpiration: false,
+      jwtFromRequest: ExtractJwt.fromExtractors([
+        (request: Request) => {
+          return request?.cookies?.Authentication ?? 
+                 request?.headers?.authorization?.split(' ')[1];
+        },
+      ]),
       secretOrKey: configService.get('JWT_SECRET'),
+      ignoreExpiration: false,
+      passReqToCallback: true,
     });
   }
 
-  async validate(payload: any) {
-    const user = await this.usersService.findOne(payload.sub);
-    
-    if (!user) {
-      throw new UnauthorizedException('User not found');
+  async validate(request: Request, payload: TokenPayload) {
+    const token = ExtractJwt.fromExtractors([
+      (req: Request) => req?.cookies?.Authentication,
+      ExtractJwt.fromAuthHeaderAsBearerToken(),
+    ])(request);
+
+    if (!token) {
+      throw new UnauthorizedException('No token provided');
     }
-    
+
+    if (await this.authService.isTokenBlacklisted(token)) {
+      throw new UnauthorizedException('Token is blacklisted');
+    }
+
     return {
-      id: user.id,
-      email: user.email,
-      name: user.name,
-      role: user.role,
+      id: payload.sub,
+      email: payload.email,
+      role: payload.role,
     };
   }
-} 
+}

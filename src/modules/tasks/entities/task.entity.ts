@@ -38,6 +38,13 @@ export class Task {
   @JoinColumn({ name: 'user_id' })
   user: User;
 
+  @Column({ name: 'assignee_id', nullable: true })
+  assigneeId?: string;
+
+  @ManyToOne(() => User, { nullable: true, onDelete: 'SET NULL' })
+  @JoinColumn({ name: 'assignee_id' })
+  assignee?: User;
+
   @CreateDateColumn({ name: 'created_at' })
   createdAt: Date;
 
