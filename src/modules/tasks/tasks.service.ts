@@ -7,7 +7,7 @@ import { UpdateTaskDto } from './dto/update-task.dto';
 import { InjectQueue } from '@nestjs/bullmq';
 import { Queue } from 'bullmq';
 import { TaskStatus } from './enums/task-status.enum';
-import { BatchTasksDto, BatchAction } from './dto/batch-tasks.dto';
+import { BatchTasksDto } from './dto/batch-task.dto';
 import { TaskFilterDto } from './dto/task-filter.dto';
 import { HttpResponse } from '../../../src/types/http-response.interface';
 import { PaginatedResponse } from '../../../src/types/pagination.interface';
@@ -296,20 +296,15 @@ export class TasksService {
     
   }
 
-  async batchProcess(dto: BatchTasksDto): Promise<{ updated?: number; deleted?: number }> {
-    const { tasks: ids, action } = dto;
+  async batchProcess(batchTasksDto: BatchTasksDto): Promise<void> {
     try {
       await this.taskQueue.addBulk(
-        ids.map(id => ({
+        batchTasksDto.taskIds.map((taskId) => ({
           name: 'task-status-update',
-          data: { taskId: id, action },
-          opts: { removeOnComplete: true, removeOnFail: 50 }, // cleanup old jobs
-        }))
+          data: { taskId, status: batchTasksDto.action === 'COMPLETED' ? TaskStatus.COMPLETED : TaskStatus.CANCELLED },
+        })),
       );
-      return {
-        updated: action === BatchAction.COMPLETE ? ids.length : undefined,
-        deleted: action === BatchAction.DELETE ? ids.length : undefined,
-      };
+
     } catch (err) {
       this.logger.error(`Failed to batch process tasks`, err);
       throw new HttpException('Failed to batch process tasks', HttpStatus.INTERNAL_SERVER_ERROR);

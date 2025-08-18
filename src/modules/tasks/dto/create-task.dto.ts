@@ -25,7 +25,6 @@ export class CreateTaskDto {
   priority?: TaskPriority;
 
   @ApiPropertyOptional({ example: '2023-12-31T23:59:59Z', required: false })
-  @IsDateString()
   @IsOptional()
   dueDate?: Date;
 

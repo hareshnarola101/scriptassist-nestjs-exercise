@@ -5,7 +5,7 @@ import { UpdateTaskDto } from './dto/update-task.dto';
 import { ApiBearerAuth, ApiOperation, ApiQuery, ApiResponse, ApiTags } from '@nestjs/swagger';
 import { TaskStatus } from './enums/task-status.enum';
 import { TaskPriority } from './enums/task-priority.enum';
-import { BatchTasksDto } from './dto/batch-tasks.dto';
+import { BatchTasksDto } from './dto/batch-task.dto';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { RateLimitGuard } from '../../common/guards/rate-limit.guard';
 import { RateLimit } from '../../common/decorators/rate-limit.decorator';
@@ -49,7 +49,6 @@ export class TasksController {
   @ApiOperation({ summary: 'Find all tasks with optional filtering & cursor pagination' })
   @ApiQuery({ name: 'status', enum: TaskStatus, required: false, description: 'Filter by task status' })
   @ApiQuery({ name: 'priority', enum: TaskPriority, required: false, description: 'Filter by task priority' })
-  @ApiQuery({ name: 'userId', type: String, required: false, description: 'Filter by owner/user id' })
   @ApiQuery({ name: 'search', type: String, required: false, description: 'Text search across title/description' })
   @ApiQuery({ name: 'createdFrom', type: String, required: false, description: 'Created at (from) - ISO8601' })
   @ApiQuery({ name: 'createdTo', type: String, required: false, description: 'Created at (to) - ISO8601' })
@@ -169,9 +168,9 @@ export class TasksController {
   @ApiResponse({ status: 400, description: 'Bad request' })
   @ApiResponse({ status: 500, description: 'Internal server error' })
   @ApiOperation({ summary: 'Batch process multiple tasks' })
-  async batchProcess(@Body() batchDto: BatchTasksDto): Promise<HttpResponse<any>> {
+  async batchProcess(@Body() batchTasksDto: BatchTasksDto): Promise<HttpResponse<any>> {
     // service executes bulk/transactional operation and returns a summarized result
-    const result = await this.tasksService.batchProcess(batchDto);
+    const result = await this.tasksService.batchProcess(batchTasksDto);
     return {
       success: true,
       data: result,
