@@ -25,11 +25,6 @@ export class TaskFilterDto {
   @IsEnum(TaskPriority)
   priority?: TaskPriority;
 
-  @ApiPropertyOptional({ type: String, format: 'uuid', description: 'Filter by owner/user id' })
-  @IsOptional()
-  @IsUUID()
-  userId?: string;
-
   @ApiPropertyOptional({ type: String, description: 'Text search across title/description' })
   @IsOptional()
   @IsString()
@@ -91,8 +86,5 @@ export class TaskFilterDto {
   @IsIn(['ASC', 'DESC'])
   sortOrder?: 'ASC' | 'DESC' = 'DESC';
 
-  @ApiPropertyOptional({ type: String, format: 'uuid', description: 'Filter by assignee id' })
-  @IsOptional()
-  @IsUUID()
-  assigneeId?: string;
+
 }

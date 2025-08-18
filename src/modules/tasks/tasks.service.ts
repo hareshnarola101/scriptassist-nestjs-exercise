@@ -11,6 +11,11 @@ import { BatchTasksDto, BatchAction } from './dto/batch-tasks.dto';
 import { TaskFilterDto } from './dto/task-filter.dto';
 import { HttpResponse } from '../../../src/types/http-response.interface';
 import { PaginatedResponse } from '../../../src/types/pagination.interface';
+import { UserResponseDto } from '@modules/users/dto/user-response.dto';
+import { RedisService } from '@common/cache/redis.service';
+import { TaskResponseDto } from './dto/task-response.dto';
+import { TaskMapper } from './mappers/task.mapper';
+import { TaskStatisticsDto } from './dto/task-statistics.dto';
 
 @Injectable()
 export class TasksService {
@@ -22,6 +27,7 @@ export class TasksService {
     private readonly dataSource: DataSource, // inject DataSource in module
     @InjectQueue('task-processing')
     private readonly taskQueue: Queue,
+    private readonly redisService: RedisService,
   ) {}
 
   // -----------------------
@@ -64,11 +70,14 @@ export class TasksService {
   // Core Methods
   // -----------------------
 
-  async create(createTaskDto: CreateTaskDto): Promise<HttpResponse<Task>> {
+  async create(createTaskDto: CreateTaskDto, user: UserResponseDto): Promise<TaskResponseDto> {
 
     try {
       const saved = await this.runInTransaction(async (qr) => {
-        const task = this.tasksRepository.create(createTaskDto);
+        const task = this.tasksRepository.create({
+          ...createTaskDto,
+          userId: user.id
+        });
         return qr.manager.save(Task, task);
       });
 
@@ -77,16 +86,14 @@ export class TasksService {
         await this.enqueueTaskStatusUpdate(saved.id, saved.status);
       } catch (queueErr) {
         // enqueue failed: log for operator/action (we could push an outbox event instead)
-        return this.formatErrorResponse(queueErr, 'Task created but failed to enqueue status update');
+        this.logger.error(`Failed to enqueue status update for task ${saved.id}`, queueErr);
+        throw new HttpException('Failed to enqueue status update', HttpStatus.INTERNAL_SERVER_ERROR);
       }
 
-      return {
-        success: true,
-        data: saved,
-        message: 'Task created successfully',
-      };
+      return TaskMapper.toDto(saved);
     } catch (err) {
-      return this.formatErrorResponse(err, 'Failed to create task');
+      this.logger.error('Failed to create task', err);
+      throw new HttpException('Task creation failed', HttpStatus.INTERNAL_SERVER_ERROR);
     }
   }
 
@@ -94,11 +101,11 @@ export class TasksService {
    * Cursor-style pagination with relations loaded in one query.
    * Controller should pass limit & cursor; this returns { items, nextCursor }
    */
-  async findAll(filters: TaskFilterDto): Promise<HttpResponse<PaginatedResponse<Task>>> {
+  async findAll(userId: string, filters: TaskFilterDto): Promise<PaginatedResponse<TaskResponseDto>> {
     try {
       const qb = this.tasksRepository.createQueryBuilder('task');
 
-      this.applyFilters(qb, filters);
+      this.applyFilters(qb, filters, userId);
 
       // Sorting
       qb.orderBy(`task.${filters.sortBy ?? 'createdAt'}`, filters.sortOrder ?? 'DESC');
@@ -112,8 +119,8 @@ export class TasksService {
       const [items, total] = await qb.getManyAndCount();
       const totalPages = Math.ceil(total / limit);
 
-      const response: PaginatedResponse<Task> = {
-        data: items,
+      const response: PaginatedResponse<TaskResponseDto> = {
+        data: items.map(TaskMapper.toDto),
         meta: {
           total,
           page,
@@ -122,20 +129,17 @@ export class TasksService {
         },
       };
 
-      return {
-        success: true,
-        data: response,
-        message: 'Tasks retrieved successfully',
-      };
+      return response;
     } catch (err) {
-      return this.formatErrorResponse(err, 'Failed to retrieve tasks');
+      this.logger.error('Failed to retrieve tasks', err);
+      throw new HttpException('Failed to retrieve tasks', HttpStatus.INTERNAL_SERVER_ERROR);
     }
   }
 
-  private applyFilters(qb: SelectQueryBuilder<Task>, filters: TaskFilterDto) {
+  private applyFilters(qb: SelectQueryBuilder<Task>, filters: TaskFilterDto, userId: string): void {
     if (filters.status) qb.andWhere('task.status = :status', { status: filters.status });
     if (filters.priority) qb.andWhere('task.priority = :priority', { priority: filters.priority });
-    if (filters.userId) qb.andWhere('task.userId = :userId', { userId: filters.userId });
+    if (userId) qb.andWhere('task.userId = :userId', { userId });
     if (filters.search) {
       qb.andWhere('(task.title ILIKE :search OR task.description ILIKE :search)', {
         search: `%${filters.search}%`,
@@ -150,31 +154,28 @@ export class TasksService {
   /**
    * Single-query find; throws NotFoundException if missing.
    */
-  async findOne(id: string): Promise<HttpResponse<Task>> {
+  async findOne(id: string, userId: string): Promise<TaskResponseDto> {
     const task = await this.tasksRepository.findOne({
-      where: { id },
+      where: { id, userId },
       relations: ['user'],
     });
 
     if (!task) {
-      return this.formatErrorResponse('Task not found', `Task with ID ${id} not found`);
+      throw new NotFoundException(`Task with ID ${id} not found`);
     }
-    return {
-      success: true,
-      data: task,
-      message: 'Task retrieved successfully',
-    };
+
+    return TaskMapper.toDto(task);
   }
 
   /**
    * Update inside a transaction. Only persist changed fields.
    * Enqueue status update after successful commit if status changed.
    */
-  async update(id: string, updateTaskDto: UpdateTaskDto): Promise<HttpResponse<Task>> {
+  async update(id: string, updateTaskDto: UpdateTaskDto, userId: string): Promise<TaskResponseDto> {
 
     try {
       const updated = await this.runInTransaction(async (qr) => {
-        const task = await qr.manager.findOne(Task, { where: { id } });
+        const task = await qr.manager.findOne(Task, { where: { id, userId } });
         if (!task) throw new NotFoundException(`Task with ID ${id} not found`);
 
         Object.assign(task, updateTaskDto);
@@ -185,39 +186,37 @@ export class TasksService {
         try {
           await this.enqueueTaskStatusUpdate(updated.id, updated.status);
         } catch (queueErr) {
-          return this.formatErrorResponse(queueErr, 'Task updated but failed to enqueue status update');
+          this.logger.error(`Failed to enqueue status update for task ${updated.id}`, queueErr);
+          throw new HttpException('Failed to enqueue status update', HttpStatus.INTERNAL_SERVER_ERROR);
         }
       }
 
       // reload with relations
       const reloaded = await this.tasksRepository.findOneOrFail({ where: { id: updated.id }, relations: ['user'] });
-      return {
-        success: true,
-        data: reloaded,
-        message: 'Task updated successfully',
-      };
+      return TaskMapper.toDto(reloaded);
     } catch (err) {
-      return this.formatErrorResponse(err, 'Failed to update task');
+      this.logger.error(`Failed to update task ${id}`, err);
+      throw new HttpException('Task update failed', HttpStatus.INTERNAL_SERVER_ERROR);
     }
   }
 
   /**
    * Remove using transaction. Consider converting to soft-delete if you need audit/history.
    */
-  async remove(id: string): Promise<HttpResponse<Task[]>> {
+  async remove(id: string, userId: string): Promise<void> {
     try {
-      return await this.runInTransaction(async (repo) => {
-        const task = await repo.manager.findOne(Task, { where: { id } });
+      await this.runInTransaction(async (repo) => {
+        const task = await repo.manager.findOne(Task, { where: { id, userId } });
         if (!task) {
-          return this.formatErrorResponse('Task not found', `Task with ID ${id} not found`);
+          throw new NotFoundException(`Task with ID ${id} not found`);
         }
         
         await repo.manager.remove(Task, task);
 
-        return { success: true, data: [], message: 'Task removed successfully' };
       });
     } catch (err) {
-      return this.formatErrorResponse(err, 'Failed to remove task');
+      this.logger.error(`Failed to delete task ${id}`, err);
+      throw new HttpException('Task deletion failed', HttpStatus.INTERNAL_SERVER_ERROR);
     }
   }
 
@@ -241,18 +240,27 @@ export class TasksService {
   /**
    * Update status called by job processors: keep it small and idempotent.
    */
-  async updateStatus(id: string, status: TaskStatus): Promise<HttpResponse<Task>> {
-    // Option A: do partial update + fetch to return latest
-    await this.tasksRepository.update({ id }, { status});
-    return this.findOne(id);
-  }
+  // async updateStatus(id: string, status: TaskStatus): Promise<HttpResponse<Task>> {
+  //   // Option A: do partial update + fetch to return latest
+  //   await this.tasksRepository.update({ id }, { status});
+  //   return this.findOne(id);
+  // }
 
-  async getStats(): Promise<HttpResponse<{ total: number; byStatus: Record<string, number>; byPriority: Record<string, number> }>> {
+  async getStats(userId: string): Promise<TaskStatisticsDto> {
+
+    const cacheKey = `user:${userId}:task_stats`;
+    const cached = await this.redisService.get(cacheKey);
+
+    if (cached) {
+      return JSON.parse(cached) as TaskStatisticsDto;
+    }
+
     const raw = await this.tasksRepository
       .createQueryBuilder('task')
       .select('COUNT(*)', 'total')
       .addSelect('task.status', 'status')
       .addSelect('task.priority', 'priority')
+      .where('task.userId = :userId', { userId })
       .groupBy('task.status')
       .addGroupBy('task.priority')
       .getRawMany();
@@ -268,42 +276,34 @@ export class TasksService {
       return acc;
     }, {});
 
-    return { success: true, data: { total, byStatus, byPriority }, message: 'Task statistics retrieved successfully' };
+    const stats: TaskStatisticsDto = {
+      totalTasks: total,
+      byStatus,
+      byPriority,
+    };
+
+    await this.redisService.set(cacheKey, JSON.stringify(stats), 60 * 5); // Cache for 5 minutes
+    return stats;
+    
   }
 
-  async batchProcess(dto: BatchTasksDto): Promise<HttpResponse<{ updated?: number; deleted?: number }>> {
+  async batchProcess(dto: BatchTasksDto): Promise<{ updated?: number; deleted?: number }> {
     const { tasks: ids, action } = dto;
-    
     try {
-      return await this.runInTransaction(async (repo) => {
-        if (action === BatchAction.COMPLETE) {
-          const res = await repo
-            .manager
-            .createQueryBuilder()
-            .update(Task)
-            .set({ status: TaskStatus.COMPLETED })
-            .where('id IN (:...ids)', { ids })
-            .execute();
-
-          return { success: true, data: { updated: res.affected ?? 0 }, message: 'Tasks marked completed' };
-        }
-
-        if (action === BatchAction.DELETE) {
-          const res = await repo
-            .manager
-            .createQueryBuilder()
-            .delete()
-            .from(Task)
-            .where('id IN (:...ids)', { ids })
-            .execute();
-
-          return { success: true, data: { deleted: res.affected ?? 0 }, message: 'Tasks deleted successfully' };
-        }
-
-        return this.formatErrorResponse('Unsupported batch action', `Action ${action} is not supported`);
-      });
+      await this.taskQueue.addBulk(
+        ids.map(id => ({
+          name: 'task-status-update',
+          data: { taskId: id, action },
+          opts: { removeOnComplete: true, removeOnFail: 50 }, // cleanup old jobs
+        }))
+      );
+      return {
+        updated: action === BatchAction.COMPLETE ? ids.length : undefined,
+        deleted: action === BatchAction.DELETE ? ids.length : undefined,
+      };
     } catch (err) {
-      return this.formatErrorResponse(err, 'Failed to batch process tasks');
+      this.logger.error(`Failed to batch process tasks`, err);
+      throw new HttpException('Failed to batch process tasks', HttpStatus.INTERNAL_SERVER_ERROR);
     }
   }
 
