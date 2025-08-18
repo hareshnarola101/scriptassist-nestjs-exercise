@@ -5,6 +5,8 @@ import { User } from './entities/user.entity';
 import { CreateUserDto } from './dto/create-user.dto';
 import { UpdateUserDto } from './dto/update-user.dto';
 import * as bcrypt from 'bcrypt';
+import { UserResponseDto } from './dto/user-response.dto';
+import { plainToInstance } from 'class-transformer';
 
 @Injectable()
 export class UsersService {
@@ -28,8 +30,14 @@ export class UsersService {
     return this.usersRepository.save(user);
   }
 
-  findAll(): Promise<User[]> {
-    return this.usersRepository.find();
+  async findAll(requestUserId: string, requestUserRole: string): Promise<UserResponseDto[]> {
+    const users = await this.usersRepository.find({
+      where: requestUserRole === 'admin' ? {} : { id: requestUserId },
+      relations: ['tasks'],
+      select: ['id', 'name', 'email', 'role', 'createdAt']
+    });
+    
+    return users.map(user => plainToInstance(UserResponseDto, user));
   }
 
   async findOne(id: string): Promise<User> {
