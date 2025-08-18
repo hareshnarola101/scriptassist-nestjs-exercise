@@ -240,11 +240,16 @@ export class TasksService {
   /**
    * Update status called by job processors: keep it small and idempotent.
    */
-  // async updateStatus(id: string, status: TaskStatus): Promise<HttpResponse<Task>> {
-  //   // Option A: do partial update + fetch to return latest
-  //   await this.tasksRepository.update({ id }, { status});
-  //   return this.findOne(id);
-  // }
+  async updateStatus(id: string, status: TaskStatus): Promise<TaskResponseDto> {
+    const task = await this.tasksRepository.findOne({ where: { id } });
+    if (!task) {
+      throw new NotFoundException(`Task with ID ${id} not found`);
+    }
+
+    task.status = status as TaskStatus;
+    const updatedTask = await this.tasksRepository.save(task);
+    return TaskMapper.toDto(updatedTask);
+  }
 
   async getStats(userId: string): Promise<TaskStatisticsDto> {
 
