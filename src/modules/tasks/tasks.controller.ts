@@ -6,7 +6,7 @@ import { ApiBearerAuth, ApiOperation, ApiQuery, ApiResponse, ApiTags } from '@ne
 import { TaskStatus } from './enums/task-status.enum';
 import { TaskPriority } from './enums/task-priority.enum';
 import { BatchTasksDto } from './dto/batch-tasks.dto';
-import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
+import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { RateLimitGuard } from '../../common/guards/rate-limit.guard';
 import { RateLimit } from '../../common/decorators/rate-limit.decorator';
 import { TaskFilterDto } from './dto/task-filter.dto';
@@ -22,13 +22,13 @@ import { TaskStatisticsDto } from './dto/task-statistics.dto';
 @Controller('tasks')
 @UseFilters(HttpExceptionFilter)
 @UseGuards(JwtAuthGuard, RateLimitGuard)
-@RateLimit({ points: 100, duration: 60000 })
+@RateLimit({ limit: 100, windowMs: 60000 })
 @ApiBearerAuth()
 export class TasksController {
   constructor(private readonly tasksService: TasksService) {}
 
   @Post()
-  @RateLimit({ points: 10, duration: 60000 }) // Limit to 10 task creations per minute
+  @RateLimit({ limit: 10, windowMs: 60000 }) // Limit to 10 task creations per minute
   @ApiOperation({ summary: 'Create a new task' })
   @ApiResponse({ status: 201, description: 'Task created successfully', type: TaskResponseDto })
   @ApiResponse({ status: 400, description: 'Bad request' })
@@ -45,7 +45,7 @@ export class TasksController {
   }
 
   @Get()
-  @RateLimit({ points: 30, duration: 60000 }) // Limit to 30 task fetches per minute
+  @RateLimit({ limit: 30, windowMs: 60000 }) // Limit to 30 task fetches per minute
   @ApiOperation({ summary: 'Find all tasks with optional filtering & cursor pagination' })
   @ApiQuery({ name: 'status', enum: TaskStatus, required: false, description: 'Filter by task status' })
   @ApiQuery({ name: 'priority', enum: TaskPriority, required: false, description: 'Filter by task priority' })
@@ -90,7 +90,7 @@ export class TasksController {
   }
 
   @Get('stats')
-  @RateLimit({ points: 30, duration: 60000 }) // Limit to 30 stats fetches per minute
+  @RateLimit({ limit: 30, windowMs: 60000 }) // Limit to 30 stats fetches per minute
   @ApiOperation({ summary: 'Get task statistics' })
   @ApiResponse({ status: 200, description: 'Task statistics retrieved successfully' })
   @ApiResponse({ status: 500, description: 'Internal server error' })
@@ -116,7 +116,7 @@ export class TasksController {
   }
 
   @Get(':id')
-  @RateLimit({ points: 60, duration: 60000 }) // Limit to 60 task fetches per minute
+  @RateLimit({ limit: 60, windowMs: 60000 }) // Limit to 60 task fetches per minute
   @ApiOperation({ summary: 'Find a task by ID' })
   @ApiResponse({ status: 200, description: 'Task found', type: TaskResponseDto })
   @ApiResponse({ status: 404, description: 'Task not found' })
@@ -132,7 +132,7 @@ export class TasksController {
   }
 
   @Patch(':id')
-  @RateLimit({ points: 20, duration: 60000 }) // Limit to 20 task updates per minute
+  @RateLimit({ limit: 20, windowMs: 60000 }) // Limit to 20 task updates per minute
   @ApiOperation({ summary: 'Update a task' })
   @ApiResponse({ status: 200, description: 'Task updated successfully', type: TaskResponseDto })
   @ApiResponse({ status: 404, description: 'Task not found' })
@@ -149,7 +149,7 @@ export class TasksController {
   }
 
   @Delete(':id')
-  @RateLimit({ points: 15, duration: 60000 }) // Limit to 15 task deletions per minute
+  @RateLimit({ limit: 15, windowMs: 60000 }) // Limit to 15 task deletions per minute
   @ApiOperation({ summary: 'Delete a task' })
   @ApiResponse({ status: 204, description: 'Task deleted successfully' })
   @ApiResponse({ status: 404, description: 'Task not found' })
@@ -163,7 +163,7 @@ export class TasksController {
   }
 
   @Post('batch')
-  @RateLimit({ points: 50, duration: 60000 }) // Limit to 50 batch operations per minute
+  @RateLimit({ limit: 50, windowMs: 60000 }) // Limit to 50 batch operations per minute
   @ApiResponse({ status: 200, description: 'Batch operation completed successfully' })
   @ApiResponse({ status: 400, description: 'Bad request' })
   @ApiResponse({ status: 500, description: 'Internal server error' })

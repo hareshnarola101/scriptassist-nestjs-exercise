@@ -1,188 +1,218 @@
 import { Injectable, Logger } from '@nestjs/common';
-import Redis from 'ioredis';
-import { v4 as uuidv4 } from 'uuid';
-import { ConfigService } from '@nestjs/config';
+import { EventEmitter2 } from '@nestjs/event-emitter';
+
+interface CacheItem<T = any> {
+  value: T;
+  expiresAt: number;
+  namespace?: string;
+}
+
+interface CacheStats {
+  hits: number;
+  misses: number;
+  expirations: number;
+  size: number;
+  lastCleaned: Date;
+}
 
 @Injectable()
 export class CacheService {
   private readonly logger = new Logger(CacheService.name);
-  private readonly redis: Redis;
-  private readonly namespace: string;
-  private readonly defaultTTL: number;
+  private cache: Map<string, CacheItem> = new Map();
+  private stats: CacheStats = {
+    hits: 0,
+    misses: 0,
+    expirations: 0,
+    size: 0,
+    lastCleaned: new Date(),
+  };
+  private readonly maxSize: number = 10000; // Adjust based on your needs
+  private cleanupInterval: NodeJS.Timeout;
+  private readonly lruKeys: string[] = []; // For LRU eviction tracking
 
-  constructor(private readonly configService: ConfigService) {
-    // Create Redis client with proper configuration
-    this.redis = new Redis({
-      host: this.configService.get('REDIS_HOST', 'localhost'),
-      port: this.configService.get('REDIS_PORT', 6379),
-      maxRetriesPerRequest: 3,
-      connectTimeout: 5000,
-      keyPrefix: this.configService.get('REDIS_PREFIX', 'cache:'),
-      lazyConnect: true,
-    });
-
-    // Initialize connection
-    this.redis.connect().catch(err => {
-      this.logger.error(`Redis connection failed: ${err.message}`);
-    });
-
-    this.namespace = this.configService.get('CACHE_NAMESPACE', 'app') + ':';
-    this.defaultTTL = this.configService.get('CACHE_TTL', 300);
-    
-    // Register event handlers
-    this.redis.on('connect', () => this.logger.log('Redis connected'));
-    this.redis.on('ready', () => this.logger.log('Redis ready'));
-    this.redis.on('error', err => this.logger.error(`Redis error: ${err.message}`));
-    this.redis.on('reconnecting', () => this.logger.warn('Redis reconnecting'));
+  constructor(private eventEmitter: EventEmitter2) {
+    // Start periodic cleanup
+    this.cleanupInterval = setInterval(() => this.cleanupExpired(), 60 * 1000);
+    process.on('beforeExit', () => clearInterval(this.cleanupInterval));
   }
 
-  async set<T>(
-    key: string,
-    value: T,
-    ttlSeconds: number = this.defaultTTL
-  ): Promise<void> {
-    const namespacedKey = this.getNamespacedKey(key);
-    
-    try {
-      const serialized = JSON.stringify({
-        data: value,
-        meta: {
-          serializedAt: new Date().toISOString(),
-          uuid: uuidv4(),
-        }
-      });
+  private generateKey(key: string, namespace?: string): string {
+    return namespace ? `${namespace}:${key}` : key;
+  }
 
-      if (ttlSeconds > 0) {
-        await this.redis.setex(namespacedKey, ttlSeconds, serialized);
-      } else {
-        await this.redis.set(namespacedKey, serialized);
+  private cloneValue<T>(value: T): T {
+    // Simple clone - consider using a library like lodash for complex objects
+    return typeof value === 'object' ? JSON.parse(JSON.stringify(value)) : value;
+  }
+
+  private cleanupExpired(): void {
+    const now = Date.now();
+    let cleaned = 0;
+    
+    for (const [key, item] of this.cache.entries()) {
+      if (item.expiresAt < now) {
+        this.cache.delete(key);
+        cleaned++;
       }
-    } catch (error) {
-      const errorMsg = (error instanceof Error) ? error.message : String(error);
-      this.logger.error(`Failed to set key ${namespacedKey}: ${errorMsg}`);
-      throw new Error('Cache set operation failed');
+    }
+
+    this.stats.expirations += cleaned;
+    this.stats.size = this.cache.size;
+    this.stats.lastCleaned = new Date();
+    
+    if (cleaned > 0) {
+      this.logger.log(`Cleaned ${cleaned} expired items from cache`);
+      this.eventEmitter.emit('cache.cleanup', { count: cleaned });
     }
   }
 
-  async get<T>(key: string): Promise<T | null> {
-    const namespacedKey = this.getNamespacedKey(key);
-    
-    try {
-      const result = await this.redis.get(namespacedKey);
-      if (!result) return null;
+  private evictIfNeeded(): void {
+    if (this.cache.size >= this.maxSize) {
+      // Evict least recently used items (10% of max size)
+      const evictCount = Math.floor(this.maxSize * 0.1);
+      const toEvict = this.lruKeys.splice(0, evictCount);
+      
+      for (const key of toEvict) {
+        this.cache.delete(key);
+      }
+      
+      this.stats.size = this.cache.size;
+      this.logger.warn(`Evicted ${evictCount} items due to cache limit`);
+      this.eventEmitter.emit('cache.evicted', { count: evictCount });
+    }
+  }
 
-      const parsed = JSON.parse(result);
-      return parsed.data;
-    } catch (error) {
-      const errorMsg = (error instanceof Error) ? error.message : String(error);
-      this.logger.error(`Failed to get key ${namespacedKey}: ${errorMsg}`);
+  private updateLru(key: string): void {
+    const index = this.lruKeys.indexOf(key);
+    if (index > -1) {
+      this.lruKeys.splice(index, 1);
+    }
+    this.lruKeys.push(key);
+  }
+
+  async set<T>(key: string, value: T, ttlSeconds = 300, namespace?: string): Promise<void> {
+    if (!key || typeof key !== 'string') {
+      throw new Error('Invalid cache key');
+    }
+
+    const cacheKey = this.generateKey(key, namespace);
+    const expiresAt = Date.now() + ttlSeconds * 1000;
+    const clonedValue = this.cloneValue(value);
+
+    this.evictIfNeeded();
+    
+    this.cache.set(cacheKey, {
+      value: clonedValue,
+      expiresAt,
+      namespace,
+    });
+    
+    this.updateLru(cacheKey);
+    this.stats.size = this.cache.size;
+    
+    this.logger.debug(`Cache set: ${cacheKey}`);
+    this.eventEmitter.emit('cache.set', { key: cacheKey, namespace });
+  }
+
+  async get<T>(key: string, namespace?: string): Promise<T | null> {
+    if (!key || typeof key !== 'string') {
+      throw new Error('Invalid cache key');
+    }
+
+    const cacheKey = this.generateKey(key, namespace);
+    const item = this.cache.get(cacheKey);
+
+    if (!item) {
+      this.stats.misses++;
+      this.eventEmitter.emit('cache.miss', { key: cacheKey, namespace });
       return null;
     }
-  }
 
-  async delete(key: string): Promise<boolean> {
-    const namespacedKey = this.getNamespacedKey(key);
-    
-    try {
-      const result = await this.redis.del(namespacedKey);
-      return result > 0;
-    } catch (error) {
-      const errorMsg = (error instanceof Error) ? error.message : String(error);
-      this.logger.error(`Failed to delete key ${namespacedKey}: ${errorMsg}`);
-      return false;
+    if (item.expiresAt < Date.now()) {
+      this.cache.delete(cacheKey);
+      this.stats.misses++;
+      this.stats.expirations++;
+      this.stats.size = this.cache.size;
+      this.eventEmitter.emit('cache.expired', { key: cacheKey, namespace });
+      return null;
     }
+
+    this.updateLru(cacheKey);
+    this.stats.hits++;
+    this.eventEmitter.emit('cache.hit', { key: cacheKey, namespace });
+    return this.cloneValue(item.value) as T;
   }
 
-  async has(key: string): Promise<boolean> {
-    const namespacedKey = this.getNamespacedKey(key);
+  async delete(key: string, namespace?: string): Promise<boolean> {
+    const cacheKey = this.generateKey(key, namespace);
+    const existed = this.cache.delete(cacheKey);
     
-    try {
-      const result = await this.redis.exists(namespacedKey);
-      return result === 1;
-    } catch (error) {
-      const errorMsg = (error instanceof Error) ? error.message : String(error);
-      this.logger.error(`Failed to check key ${namespacedKey}: ${errorMsg}`);
-      return false;
+    if (existed) {
+      const index = this.lruKeys.indexOf(cacheKey);
+      if (index > -1) {
+        this.lruKeys.splice(index, 1);
+      }
+      this.stats.size = this.cache.size;
+      this.eventEmitter.emit('cache.deleted', { key: cacheKey, namespace });
     }
+    
+    return existed;
   }
 
-  async clearNamespace(): Promise<void> {
-    try {
-      const pattern = `${this.namespace}*`;
-      const stream = this.redis.scanStream({ match: pattern });
-      
-      let keys: string[] = [];
-      for await (const resultKeys of stream) {
-        keys = keys.concat(resultKeys);
-        if (keys.length > 100) {
-          await this.redis.del(...keys);
-          keys = [];
+  async clear(namespace?: string): Promise<void> {
+    if (namespace) {
+      for (const [key, item] of this.cache.entries()) {
+        if (item.namespace === namespace) {
+          this.cache.delete(key);
         }
       }
-      
-      if (keys.length > 0) {
-        await this.redis.del(...keys);
+    } else {
+      this.cache.clear();
+      this.lruKeys.length = 0;
+    }
+    
+    this.stats.size = this.cache.size;
+    this.eventEmitter.emit('cache.cleared', { namespace });
+  }
+
+  async has(key: string, namespace?: string): Promise<boolean> {
+    if (!key || typeof key !== 'string') {
+        throw new Error('Invalid cache key');
+    }
+
+    const cacheKey = this.generateKey(key, namespace);
+    const item = this.cache.get(cacheKey);
+    
+    // Explicitly check for undefined and expiration
+    return item !== undefined && item.expiresAt >= Date.now();
+}
+
+  async getStats(): Promise<CacheStats> {
+    return {
+      ...this.stats,
+      size: this.cache.size,
+    };
+  }
+
+  async keys(namespace?: string): Promise<string[]> {
+    const keys: string[] = [];
+    
+    for (const [key, item] of this.cache.entries()) {
+      if (!namespace || item.namespace === namespace) {
+        keys.push(key);
       }
-    } catch (error) {
-      const errorMsg = (error instanceof Error) ? error.message : String(error);
-      this.logger.error(`Failed to clear namespace: ${errorMsg}`);
-      throw new Error('Cache clear operation failed');
     }
+    
+    return keys;
   }
 
-  async getWithFallback<T>(
-    key: string,
-    fallback: () => Promise<T>,
-    ttlSeconds: number = this.defaultTTL
-  ): Promise<T> {
-    const cached = await this.get<T>(key);
-    if (cached !== null) return cached;
-
-    const result = await fallback();
-    await this.set(key, result, ttlSeconds);
-    return result;
-  }
-
-  async getStats(): Promise<{
-    keys: number;
-    memory: number;
-    namespace: string;
-  }> {
-    try {
-      const info = await this.redis.info('memory');
-      const keys = await this.redis.keys(`${this.namespace}*`);
-
-      const memoryUsage = info.match(/used_memory:\d+/)?.[0]?.split(':')[1] || '0';
-
-      return {
-        keys: keys.length,
-        memory: parseInt(memoryUsage, 10),
-        namespace: this.namespace,
-      };
-    } catch (error) {
-      const errorMsg = (error instanceof Error) ? error.message : String(error);
-      this.logger.error(`Failed to get cache stats: ${errorMsg}`);
-      return {
-        keys: 0,
-        memory: 0,
-        namespace: this.namespace,
-      };
-    }
-  }
-
-  async disconnect(): Promise<void> {
-    try {
-      await this.redis.quit();
-    } catch (error) {
-      const errorMsg = (error instanceof Error) ? error.message : String(error);
-      this.logger.error(`Failed to disconnect from Redis: ${errorMsg}`);
-    }
-  }
-
-  private getNamespacedKey(key: string): string {
-    if (!key || typeof key !== 'string' || key.length > 256) {
-      throw new Error(`Invalid cache key: ${key}`);
-    }
-    return `${this.namespace}${key}`;
+  async ttl(key: string, namespace?: string): Promise<number> {
+    const cacheKey = this.generateKey(key, namespace);
+    const item = this.cache.get(cacheKey);
+    
+    if (!item) return -2;
+    if (item.expiresAt < Date.now()) return -1;
+    
+    return Math.floor((item.expiresAt - Date.now()) / 1000);
   }
 }

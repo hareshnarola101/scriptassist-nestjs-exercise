@@ -1,70 +1,85 @@
-import {
-  ExceptionFilter,
-  Catch,
-  ArgumentsHost,
-  HttpException,
-  HttpStatus,
-  Logger,
-} from '@nestjs/common';
+import { ExceptionFilter, Catch, ArgumentsHost, HttpException, Logger, HttpStatus } from '@nestjs/common';
 import { Request, Response } from 'express';
 
-@Catch()
+interface ExceptionResponse {
+  message?: string | string[];
+  error?: string;
+  details?: any;
+  [key: string]: any; // Allow for additional properties
+}
+
+@Catch(HttpException)
 export class HttpExceptionFilter implements ExceptionFilter {
   private readonly logger = new Logger(HttpExceptionFilter.name);
 
-  catch(exception: unknown, host: ArgumentsHost) {
+  catch(exception: HttpException, host: ArgumentsHost) {
     const ctx = host.switchToHttp();
     const response = ctx.getResponse<Response>();
     const request = ctx.getRequest<Request>();
+    const status = exception.getStatus();
+    const exceptionResponse = exception.getResponse() as ExceptionResponse | string;
 
-    let status: number;
-    let message: string | string[];
-    let error: string | undefined;
+    // Determine if the error is operational (client error) or system error
+    const isOperationalError = status < HttpStatus.INTERNAL_SERVER_ERROR;
 
-    // Differentiate between known HttpExceptions and unexpected errors
-    if (exception instanceof HttpException) {
-      status = exception.getStatus();
-      const exceptionResponse = exception.getResponse();
-
-      if (typeof exceptionResponse === 'string') {
-        message = exceptionResponse;
-      } else if (
-        typeof exceptionResponse === 'object' &&
-        (exceptionResponse as any).message
-      ) {
-        message = (exceptionResponse as any).message;
-        error = (exceptionResponse as any).error;
-      } else {
-        message = exception.message;
-      }
-    } else {
-      status = HttpStatus.INTERNAL_SERVER_ERROR;
-      message = 'Internal server error';
-    }
-
-    // Log critical vs client errors differently
-    if (status >= 500) {
-      this.logger.error(
-        `Server error on ${request.method} ${request.url}`,
-        (exception as any)?.stack,
-      );
-    } else {
+    // Log errors appropriately based on their severity
+    if (isOperationalError) {
       this.logger.warn(
-        `Client error ${status} on ${request.method} ${request.url} → ${JSON.stringify(
-          message,
-        )}`,
+        `Client Error: ${exception.message} Path: ${request.url}`,
+        exception.stack,
+      );
+    } else {
+      this.logger.error(
+        `Server Error: ${exception.message} Path: ${request.url}`,
+        exception.stack,
       );
     }
 
-    // Unified JSON response format
-    response.status(status).json({
-      success: false,
-      statusCode: status,
-      timestamp: new Date().toISOString(),
-      path: request.url,
-      method: request.method,
-      message,
-      ...(error ? { error } : {}),
-    });
+    // Format error response consistently
+    let responseBody: {
+      success: boolean;
+      statusCode: number;
+      message: string;
+      error?: string;
+      details?: any;
+      path?: string;
+      timestamp?: string;
+    };
+
+    if (typeof exceptionResponse === 'object' && exceptionResponse !== null) {
+      // Handle class-validator errors or custom exception responses
+
+      const message = Array.isArray(exceptionResponse.message)
+        ? exceptionResponse.message.join(', ')
+        : exceptionResponse.message;
+
+      responseBody = {
+        success: false,
+        statusCode: status,
+        message: message ?? exception.message,
+        error: exceptionResponse['error'] ?? exception.name,
+        details: exceptionResponse['details'] ?? undefined,
+        path: request.url,
+        timestamp: new Date().toISOString(),
+      };
+    } else {
+      // Standard error format
+      responseBody = {
+        success: false,
+        statusCode: status,
+        message: exceptionResponse || exception.message,
+        error: exception.name,
+        path: request.url,
+        timestamp: new Date().toISOString(),
+      };
+    }
+
+    // Sanitize error details in production to avoid leaking sensitive information
+    if (process.env.NODE_ENV === 'production' && !isOperationalError) {
+      responseBody.message = 'Internal server error';
+      delete responseBody.details;
+    }
+
+    response.status(status).json(responseBody);
   }
 }
