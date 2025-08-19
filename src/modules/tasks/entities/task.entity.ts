@@ -36,7 +36,7 @@ export class Task {
 
   @ManyToOne(() => User, (user) => user.tasks, { onDelete: 'CASCADE', cascade: false })
   @JoinColumn({ name: 'user_id' })
-  user: User;
+  user: any;
 
   @CreateDateColumn({ name: 'created_at' })
   createdAt: Date;

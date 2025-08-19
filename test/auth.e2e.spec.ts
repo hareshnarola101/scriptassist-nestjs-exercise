@@ -18,6 +18,7 @@ describe('AuthController (e2e)', () => {
           password: 'Password123!',
           name: 'New User',
           deviceId: 'test-new-device-id',
+          confirmPassword: 'Password123!'
         })
         .expect(201);
 
@@ -31,6 +32,8 @@ describe('AuthController (e2e)', () => {
           email: 'duplicate@example.com',
           password: 'Password123!',
           name: 'Duplicate User',
+          deviceId: 'test-duplicate-device-id',
+          confirmPassword: 'Password123!'
         });
 
       await supertest(getTestApp().getHttpServer())
@@ -38,9 +41,11 @@ describe('AuthController (e2e)', () => {
         .send({
           email: 'duplicate@example.com',
           password: 'Password123!',
-          name: 'Duplicate User'
+          name: 'Duplicate User',
+          deviceId: 'test-duplicate-device-id',
+          confirmPassword: 'Password123!'
         })
-        .expect(400);
+        .expect(409);
     });
   });
 
@@ -53,6 +58,7 @@ describe('AuthController (e2e)', () => {
           password: 'Password123!',
           name: 'Login User',
           deviceId: 'test-new-device-id',
+          confirmPassword: 'Password123!'
         });
 
       const response = await supertest(getTestApp().getHttpServer())
@@ -88,6 +94,7 @@ describe('AuthController (e2e)', () => {
           password: 'Password123!',
           name: 'Refresh User',
           deviceId: 'test-new-device-1-id',
+          confirmPassword: 'Password123!'
         });
 
       const loginResponse = await supertest(getTestApp().getHttpServer())

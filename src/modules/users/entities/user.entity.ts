@@ -39,11 +39,5 @@ export class User {
   @OneToMany(() => RefreshToken, (refreshToken) => refreshToken.user, { cascade: ['insert', 'update'], onDelete: 'CASCADE' })
   refreshTokens: RefreshToken[];
 
-  @BeforeInsert()
-  async prepareData() {
-    if (this.password) {
-      this.password = await bcrypt.hash(this.password, 10);
-    }
-    this.email = this.email.toLowerCase();
-  }
+  
 } 

@@ -1,4 +1,5 @@
 import { initializeTestApp, getTestApp, closeTestApp, supertest, authToken } from './jest-setup';
+const { v4: uuidv4 } = require('uuid');
 
 describe('TasksController (e2e)', () => {
   let createdTaskId: string;
@@ -22,11 +23,12 @@ describe('TasksController (e2e)', () => {
           status: 'PENDING',
           priority: 'MEDIUM',
           dueDate: new Date(Date.now() + 86400000).toISOString(),
+          userId: uuidv4()
         })
 
       expect(response.status).toBe(201);
-      createdTaskId = response.body.id;
-      expect(response.body.title).toBe('Test Task');
+      createdTaskId = response.body.data.id;
+      expect(response.body.data.title).toBe('Test Task');
     });
   });
 
@@ -37,7 +39,7 @@ describe('TasksController (e2e)', () => {
         .set('Authorization', `Bearer ${authToken}`)
         .expect(200);
 
-      expect(Array.isArray(response.body.data)).toBe(true);
+      expect(Array.isArray(response.body.data.data)).toBe(true);
     });
   });
 

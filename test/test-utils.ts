@@ -31,7 +31,8 @@ export async function createTestUser(app: { getHttpServer: () => any }) {
     email: `testuser+${uniqueId}@example.com`,
     password: `Password123!${uniqueId}`,
     name: `Test User ${uniqueId}`,
-    deviceId: `test-device-${uniqueId}`
+    deviceId: `test-device-${uniqueId}`,
+    confirmPassword: `Password123!${uniqueId}`
   };
 
   const response = await supertest(app.getHttpServer())
